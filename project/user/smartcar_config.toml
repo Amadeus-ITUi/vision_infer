@@ -1,0 +1,85 @@
+# vision_infer 最小配置文件。
+# 当前工程只保留这一条视觉链路：
+# BGR 彩图获取 -> 红框识别 -> ROI 提取 -> ncnn 推理 -> 网页发送
+#
+# 这里已经删除逐飞助手图传、巡线、IPM、状态机等旧参数。
+# 如果这里出现未知键，程序会直接报错，避免旧配置混进来。
+
+[meta]
+# 配置文件版本。
+# 目前解析器只接受版本 1。
+schema_version = 1
+
+[vision.runtime]
+# 是否开启整条推理链。
+# true：执行红框识别和 ncnn 推理。
+# false：只做基础图像处理，不产出红框和推理结果。
+infer_enabled = false
+
+# 是否开启 ncnn 分类。
+# true：红框识别成功后继续做 ROI 分类。
+# false：只保留红框和 ROI，不做分类。
+ncnn_enabled = false
+
+[vision.runtime.ncnn]
+# ncnn 模型输入宽度。
+# 一般与训练/导出的模型输入保持一致。
+input_width = 64
+
+# ncnn 模型输入高度。
+input_height = 64
+
+# 标签数量。
+# 必须和下面 labels 数组长度完全一致。
+label_count = 3
+
+# 类别标签表。
+# 顺序必须与模型输出类别顺序一致。
+labels = ["supplies", "vehicles", "weapons"]
+
+[vision.runtime.web]
+# 是否开启网页图像发送。
+enabled = true
+
+# 网页图像发送最大帧率。
+# 0 表示不限速；数值越大，占用带宽越高。
+max_fps = 10
+
+# 是否发送灰度图。
+# 现在默认关闭，因为当前网页主看彩图和 ROI。
+send_gray_jpeg = true
+
+# 灰度图编码格式。
+# 0=JPEG, 1=PNG, 2=BMP。
+gray_image_format = 0
+
+# 是否发送二值图。
+# 现在默认关闭，通常只在排查阈值问题时才需要。
+send_binary_jpeg = false
+
+# 二值图编码格式。
+binary_image_format = 0
+
+# 是否发送彩图。
+# 现在默认开启，网页主要看这一路。
+send_rgb_jpeg = true
+
+# 彩图编码格式。
+rgb_image_format = 0
+
+# 0=FULL, 1=RAW_MINIMAL。
+# 现在后端已经固定输出最小状态，保留这个字段只为了兼容前端标识。
+data_profile = 1
+
+# 是否开启 TCP 状态发送。
+# true 时网页能收到红框、ROI、推理结果和耗时信息。
+tcp_enabled = true
+
+# 电脑端接收网页服务的 IP。
+server_ip = "172.21.79.179"
+
+# 电脑端 UDP 图像端口。
+video_port = 10000
+
+# 电脑端 TCP 状态端口。
+meta_port = 10001
