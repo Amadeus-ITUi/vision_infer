@@ -87,6 +87,7 @@ static infer_job_t g_infer_job;
 static infer_worker_result_t g_latest_infer_result;
 static bool g_latest_infer_result_valid = false;
 static uint32 g_latest_infer_result_seq = 0;
+static std::atomic<uint32> g_infer_fps(0);
 
 // 作用：参考分辨率参数缩放到当前处理分辨率。
 static inline int scale_by_width(int ref_px)
@@ -307,11 +308,15 @@ static void reset_infer_shared_state()
     g_latest_infer_result = infer_worker_result_t{};
     g_latest_infer_result_valid = false;
     g_latest_infer_result_seq = 0;
+    g_infer_fps.store(0);
 }
 
 // 作用：异步推理工作线程主循环。
 static void run_infer_worker()
 {
+    uint32 window_frames = 0;
+    auto window_start = std::chrono::steady_clock::now();
+
     for (;;)
     {
         infer_job_t job;
@@ -379,6 +384,19 @@ static void run_infer_worker()
             g_latest_infer_result = result;
             ++g_latest_infer_result_seq;
             g_latest_infer_result_valid = true;
+        }
+
+        ++window_frames;
+        const auto now = std::chrono::steady_clock::now();
+        const uint64 elapsed_us = static_cast<uint64>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - window_start).count());
+        if (elapsed_us >= 1000000ULL)
+        {
+            const uint32 fps = static_cast<uint32>(
+                (static_cast<uint64>(window_frames) * 1000000ULL + elapsed_us / 2ULL) / elapsed_us);
+            g_infer_fps.store(fps);
+            window_frames = 0;
+            window_start = now;
         }
     }
 }
@@ -789,4 +807,9 @@ bool vision_infer_async_fetch_latest(vision_infer_async_result_t *out)
         std::snprintf(out->ncnn_labels[i], sizeof(out->ncnn_labels[i]), "%s", label.c_str());
     }
     return true;
+}
+
+uint32 vision_infer_async_fps()
+{
+    return g_infer_fps.load();
 }

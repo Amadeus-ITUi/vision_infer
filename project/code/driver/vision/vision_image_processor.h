@@ -5,8 +5,9 @@
 
 #include <cstddef>
 
-#define VISION_DOWNSAMPLED_WIDTH 160
-#define VISION_DOWNSAMPLED_HEIGHT 120
+// 处理分辨率直接跟随当前采图分辨率，不再额外降采样。
+#define VISION_DOWNSAMPLED_WIDTH UVC_WIDTH
+#define VISION_DOWNSAMPLED_HEIGHT UVC_HEIGHT
 #define VISION_IPM_WIDTH 280
 #define VISION_IPM_HEIGHT 140
 
@@ -35,19 +36,15 @@ uint32 vision_image_processor_processed_frame_seq();
 void vision_image_processor_reload_config_from_globals();
 
 const uint8 *vision_image_processor_gray_image();
-const uint8 *vision_image_processor_binary_u8_image();
 const uint8 *vision_image_processor_bgr_image();
 const uint8 *vision_image_processor_bgr_full_image();
 const uint8 *vision_image_processor_gray_downsampled_image();
-const uint8 *vision_image_processor_binary_downsampled_u8_image();
 const uint8 *vision_image_processor_bgr_downsampled_image();
 
 void vision_image_processor_get_last_perf_us(uint32 *capture_wait_us,
                                              uint32 *preprocess_us,
-                                             uint32 *otsu_us,
                                              uint32 *maze_us,
                                              uint32 *total_us);
-uint8 vision_image_processor_get_last_otsu_threshold();
 void vision_image_processor_get_last_red_detect_us(uint32 *red_detect_us);
 void vision_image_processor_set_last_red_detect_us(uint32 red_detect_us);
 void vision_image_processor_get_last_maze_detail_us(uint32 *maze_setup_us,

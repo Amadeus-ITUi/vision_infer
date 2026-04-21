@@ -571,8 +571,6 @@ bool apply_values(const RawMap &values, std::string *error_message)
         !require_int(values, &consumed, "vision.runtime.web.max_fps", &udp_web_max_fps, error_message) ||
         !require_bool(values, &consumed, "vision.runtime.web.send_gray_jpeg", &g_vision_runtime_config.udp_web_send_gray_jpeg, error_message) ||
         !require_int(values, &consumed, "vision.runtime.web.gray_image_format", &g_vision_runtime_config.udp_web_gray_image_format, error_message) ||
-        !require_bool(values, &consumed, "vision.runtime.web.send_binary_jpeg", &g_vision_runtime_config.udp_web_send_binary_jpeg, error_message) ||
-        !require_int(values, &consumed, "vision.runtime.web.binary_image_format", &g_vision_runtime_config.udp_web_binary_image_format, error_message) ||
         !require_bool(values, &consumed, "vision.runtime.web.send_rgb_jpeg", &g_vision_runtime_config.udp_web_send_rgb_jpeg, error_message) ||
         !require_int(values, &consumed, "vision.runtime.web.rgb_image_format", &g_vision_runtime_config.udp_web_rgb_image_format, error_message) ||
         !require_int(values, &consumed, "vision.runtime.web.data_profile", &g_vision_runtime_config.udp_web_data_profile, error_message) ||

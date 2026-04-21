@@ -23,7 +23,6 @@ struct vision_perf_accum_t
     uint64_t capture_wait_us = 0;
     uint64_t preprocess_us = 0;
     uint64_t red_detect_us = 0;
-    uint64_t otsu_us = 0;
     uint64_t maze_us = 0;
     uint64_t maze_setup_us = 0;
     uint64_t maze_start_us = 0;
@@ -76,10 +75,9 @@ void vision_loop()
         uint32 capture_wait_us = 0;
         uint32 preprocess_us = 0;
         uint32 red_detect_us = 0;
-        uint32 otsu_us = 0;
         uint32 maze_us = 0;
         uint32 process_us = 0;
-        vision_image_processor_get_last_perf_us(&capture_wait_us, &preprocess_us, &otsu_us, &maze_us, &process_us);
+        vision_image_processor_get_last_perf_us(&capture_wait_us, &preprocess_us, &maze_us, &process_us);
         vision_image_processor_get_last_red_detect_us(&red_detect_us);
         uint32 maze_setup_us = 0;
         uint32 maze_start_us = 0;
@@ -107,7 +105,6 @@ void vision_loop()
         perf_acc.capture_wait_us += capture_wait_us;
         perf_acc.preprocess_us += preprocess_us;
         perf_acc.red_detect_us += red_detect_us;
-        perf_acc.otsu_us += otsu_us;
         perf_acc.maze_us += maze_us;
         perf_acc.maze_setup_us += maze_setup_us;
         perf_acc.maze_start_us += maze_start_us;

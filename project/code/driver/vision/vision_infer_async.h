@@ -138,4 +138,7 @@ void vision_infer_async_submit_frame(const uint8 *bgr_proc_data,
 // 是否调用：是，vision_pipeline_process_step 每帧尝试调用。
 bool vision_infer_async_fetch_latest(vision_infer_async_result_t *out);
 
+// 作用：获取异步推理线程 FPS（约 1 秒窗口）。
+uint32 vision_infer_async_fps();
+
 #endif

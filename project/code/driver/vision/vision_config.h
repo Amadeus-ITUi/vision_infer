@@ -37,8 +37,6 @@ typedef struct
     uint32 udp_web_max_fps;
     bool udp_web_send_gray_jpeg;
     int udp_web_gray_image_format;
-    bool udp_web_send_binary_jpeg;
-    int udp_web_binary_image_format;
     bool udp_web_send_rgb_jpeg;
     int udp_web_rgb_image_format;
     int udp_web_data_profile;

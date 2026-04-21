@@ -93,14 +93,13 @@ int main(int, char **)
     }
 
     printf("[VISION] minimal pipeline: bgr -> red_rect -> roi -> ncnn -> web\r\n");
-    printf("[UDP_WEB] enabled=%d server=%s video=%u meta=%u fps=%u gray=%d binary=%d rgb=%d\r\n",
+    printf("[UDP_WEB] enabled=%d server=%s video=%u meta=%u fps=%u gray=%d rgb=%d\r\n",
            vision_transport_udp_is_enabled() ? 1 : 0,
            g_vision_runtime_config.udp_web_server_ip,
            static_cast<unsigned int>(g_vision_runtime_config.udp_web_video_port),
            static_cast<unsigned int>(g_vision_runtime_config.udp_web_meta_port),
            static_cast<unsigned int>(vision_transport_udp_get_max_fps()),
            g_vision_runtime_config.udp_web_send_gray_jpeg ? 1 : 0,
-           g_vision_runtime_config.udp_web_send_binary_jpeg ? 1 : 0,
            g_vision_runtime_config.udp_web_send_rgb_jpeg ? 1 : 0);
 
     while (!g_should_exit)

@@ -39,14 +39,20 @@ function modeName(mode) {
 
 function parseHeader(buf) {
   if (buf.length < HEADER_SIZE) return null;
+  // Board sender currently writes header in native byte order.
+  // Accept both LE and BE so web receiver remains compatible.
+  const magicBE = buf.readUInt32BE(0);
+  const littleEndian = magicBE !== MAGIC && buf.readUInt32LE(0) === MAGIC;
+  const readU32 = littleEndian ? (offset) => buf.readUInt32LE(offset) : (offset) => buf.readUInt32BE(offset);
+  const readU16 = littleEndian ? (offset) => buf.readUInt16LE(offset) : (offset) => buf.readUInt16BE(offset);
   return {
-    magic: buf.readUInt32BE(0),
-    frameId: buf.readUInt32BE(4),
-    chunkIdx: buf.readUInt16BE(8),
-    chunkTotal: buf.readUInt16BE(10),
-    payloadLen: buf.readUInt16BE(12),
-    width: buf.readUInt16BE(14),
-    height: buf.readUInt16BE(16),
+    magic: readU32(0),
+    frameId: readU32(4),
+    chunkIdx: readU16(8),
+    chunkTotal: readU16(10),
+    payloadLen: readU16(12),
+    width: readU16(14),
+    height: readU16(16),
     mode: buf.readUInt8(18),
     format: buf.readUInt8(19)
   };

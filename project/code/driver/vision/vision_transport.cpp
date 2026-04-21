@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -43,7 +44,7 @@ struct udp_chunk_header_t
     uint16 width;
     uint16 height;
     uint8 mode;
-    uint8 reserved;
+    uint8 format;
 };
 #pragma pack(pop)
 
@@ -68,6 +69,73 @@ uint64 now_us()
     return static_cast<uint64>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+double read_cpu_usage_percent()
+{
+    static std::mutex cpu_mutex;
+    static uint64 prev_total = 0;
+    static uint64 prev_idle = 0;
+    static bool has_prev = false;
+
+    std::ifstream stat_file("/proc/stat");
+    if (!stat_file.is_open())
+    {
+        return 0.0;
+    }
+
+    std::string cpu_label;
+    uint64 user = 0;
+    uint64 nice = 0;
+    uint64 system = 0;
+    uint64 idle = 0;
+    uint64 iowait = 0;
+    uint64 irq = 0;
+    uint64 softirq = 0;
+    uint64 steal = 0;
+    stat_file >> cpu_label >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal;
+    if (cpu_label != "cpu")
+    {
+        return 0.0;
+    }
+
+    const uint64 total = user + nice + system + idle + iowait + irq + softirq + steal;
+    const uint64 idle_total = idle + iowait;
+
+    std::lock_guard<std::mutex> lock(cpu_mutex);
+    if (!has_prev)
+    {
+        prev_total = total;
+        prev_idle = idle_total;
+        has_prev = true;
+        return 0.0;
+    }
+
+    const uint64 total_delta = total - prev_total;
+    const uint64 idle_delta = idle_total - prev_idle;
+    prev_total = total;
+    prev_idle = idle_total;
+    if (total_delta == 0)
+    {
+        return 0.0;
+    }
+
+    const double busy_ratio = static_cast<double>(total_delta - idle_delta) / static_cast<double>(total_delta);
+    const double usage_percent = busy_ratio * 100.0;
+    return usage_percent < 0.0 ? 0.0 : usage_percent;
+}
+
+uint16 to_be16(uint16 value)
+{
+    return static_cast<uint16>((value >> 8) | (value << 8));
+}
+
+uint32 to_be32(uint32 value)
+{
+    return ((value & 0x000000FFu) << 24) |
+           ((value & 0x0000FF00u) << 8) |
+           ((value & 0x00FF0000u) >> 8) |
+           ((value & 0xFF000000u) >> 24);
 }
 
 bool fps_limited(std::atomic<uint64> &last_tick_us, uint32 max_fps)
@@ -97,7 +165,11 @@ std::vector<uchar> encode_image(const cv::Mat &image, bool gray)
     return encoded;
 }
 
-void udp_send_frame_payload(const std::vector<uchar> &encoded, uint16 width, uint16 height, uint8 mode)
+void udp_send_frame_payload(const std::vector<uchar> &encoded,
+                            uint16 width,
+                            uint16 height,
+                            uint8 mode,
+                            uint8 format)
 {
     if (!g_udp_ready || encoded.empty())
     {
@@ -114,21 +186,22 @@ void udp_send_frame_payload(const std::vector<uchar> &encoded, uint16 width, uin
         const size_t offset = static_cast<size_t>(chunk_idx) * chunk_capacity;
         const size_t payload_len = std::min<size_t>(chunk_capacity, encoded.size() - offset);
         udp_chunk_header_t header{};
-        header.magic = kMagic;
-        header.frame_id = frame_id;
-        header.chunk_idx = chunk_idx;
-        header.chunk_total = chunk_total;
-        header.payload_len = static_cast<uint16>(payload_len);
-        header.width = width;
-        header.height = height;
+        header.magic = to_be32(kMagic);
+        header.frame_id = to_be32(frame_id);
+        header.chunk_idx = to_be16(chunk_idx);
+        header.chunk_total = to_be16(chunk_total);
+        header.payload_len = to_be16(static_cast<uint16>(payload_len));
+        header.width = to_be16(width);
+        header.height = to_be16(height);
         header.mode = mode;
+        header.format = format;
         std::memcpy(packet.data(), &header, sizeof(header));
         std::memcpy(packet.data() + sizeof(header), encoded.data() + offset, payload_len);
         udp_send_data(packet.data(), static_cast<uint32>(sizeof(header) + payload_len));
     }
 }
 
-void udp_send_gray_binary_rgb()
+void udp_send_gray_rgb()
 {
     if (!g_udp_enabled.load() || fps_limited(g_udp_last_send_tick_us, g_udp_max_fps.load()))
     {
@@ -143,18 +216,7 @@ void udp_send_gray_binary_rgb()
         if (gray != nullptr)
         {
             cv::Mat gray_img(VISION_DOWNSAMPLED_HEIGHT, VISION_DOWNSAMPLED_WIDTH, CV_8UC1, const_cast<uint8 *>(gray));
-            udp_send_frame_payload(encode_image(gray_img, true), gray_img.cols, gray_img.rows, 1);
-            ++sent_count;
-        }
-    }
-
-    if (g_vision_runtime_config.udp_web_send_binary_jpeg)
-    {
-        const uint8 *binary = vision_image_processor_binary_downsampled_u8_image();
-        if (binary != nullptr)
-        {
-            cv::Mat binary_img(VISION_DOWNSAMPLED_HEIGHT, VISION_DOWNSAMPLED_WIDTH, CV_8UC1, const_cast<uint8 *>(binary));
-            udp_send_frame_payload(encode_image(binary_img, true), binary_img.cols, binary_img.rows, 0);
+            udp_send_frame_payload(encode_image(gray_img, true), gray_img.cols, gray_img.rows, 1, VISION_WEB_IMAGE_FORMAT_JPEG);
             ++sent_count;
         }
     }
@@ -165,7 +227,7 @@ void udp_send_gray_binary_rgb()
         if (bgr != nullptr)
         {
             cv::Mat bgr_img(VISION_DOWNSAMPLED_HEIGHT, VISION_DOWNSAMPLED_WIDTH, CV_8UC3, const_cast<uint8 *>(bgr));
-            udp_send_frame_payload(encode_image(bgr_img, false), bgr_img.cols, bgr_img.rows, 2);
+            udp_send_frame_payload(encode_image(bgr_img, false), bgr_img.cols, bgr_img.rows, 2, VISION_WEB_IMAGE_FORMAT_JPEG);
             ++sent_count;
         }
     }
@@ -188,7 +250,7 @@ void udp_send_gray_binary_rgb()
             {
                 cv::Mat roi_resized;
                 cv::resize(bgr_img(roi), roi_resized, cv::Size(kRoi64Size, kRoi64Size), 0.0, 0.0, cv::INTER_LINEAR);
-                udp_send_frame_payload(encode_image(roi_resized, false), roi_resized.cols, roi_resized.rows, 3);
+                udp_send_frame_payload(encode_image(roi_resized, false), roi_resized.cols, roi_resized.rows, 3, VISION_WEB_IMAGE_FORMAT_JPEG);
                 ++sent_count;
             }
         }
@@ -224,9 +286,8 @@ void tcp_send_status()
 
     uint32 capture_wait_us = 0;
     uint32 preprocess_us = 0;
-    uint32 otsu_us = 0;
     uint32 total_us = 0;
-    vision_image_processor_get_last_perf_us(&capture_wait_us, &preprocess_us, &otsu_us, nullptr, &total_us);
+    vision_image_processor_get_last_perf_us(&capture_wait_us, &preprocess_us, nullptr, &total_us);
 
     bool red_found = false;
     int red_x = 0;
@@ -246,6 +307,7 @@ void tcp_send_status()
 
     vision_infer_async_result_t infer_result{};
     const bool has_infer_result = vision_infer_async_fetch_latest(&infer_result);
+    const double cpu_usage_percent = read_cpu_usage_percent();
 
     char line[4096];
     std::snprintf(line,
@@ -254,11 +316,11 @@ void tcp_send_status()
                   "\"ts_ms\":%llu,"
                   "\"capture_thread_fps\":%u,"
                   "\"vision_process_fps\":%u,"
+                  "\"infer_thread_fps\":%u,"
                   "\"udp_tx_fps\":%u,"
-                  "\"otsu_threshold\":%u,"
+                  "\"cpu_usage_percent\":%.2f,"
                   "\"capture_wait_us\":%u,"
                   "\"preprocess_us\":%u,"
-                  "\"otsu_us\":%u,"
                   "\"total_us\":%u,"
                   "\"red_found\":%s,"
                   "\"red\":[%d,%d,%d,%d,%d,%d],"
@@ -278,11 +340,11 @@ void tcp_send_status()
                   static_cast<unsigned long long>(now_us() / 1000ULL),
                   static_cast<unsigned int>(vision_frame_capture_fps()),
                   static_cast<unsigned int>(vision_thread_process_fps()),
+                  static_cast<unsigned int>(vision_infer_async_fps()),
                   static_cast<unsigned int>(g_udp_tx_fps.load()),
-                  static_cast<unsigned int>(vision_image_processor_get_last_otsu_threshold()),
+                  cpu_usage_percent,
                   static_cast<unsigned int>(capture_wait_us),
                   static_cast<unsigned int>(preprocess_us),
-                  static_cast<unsigned int>(otsu_us),
                   static_cast<unsigned int>(total_us),
                   red_found ? "true" : "false",
                   red_x,
@@ -321,7 +383,7 @@ void vision_transport_init()
 void vision_transport_send_step()
 {
     const uint64 start_us = now_us();
-    udp_send_gray_binary_rgb();
+    udp_send_gray_rgb();
     tcp_send_status();
     g_last_send_time_us.store(static_cast<uint32>(now_us() - start_us));
 }

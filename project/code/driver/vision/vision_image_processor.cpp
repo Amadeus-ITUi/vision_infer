@@ -19,15 +19,12 @@ constexpr uint32 kCaptureWaitTimeoutMs = 200;
 std::array<uint8, UVC_WIDTH * UVC_HEIGHT * 3> g_bgr_full = {};
 std::array<uint8, kProcWidth * kProcHeight * 3> g_bgr_proc = {};
 std::array<uint8, kProcWidth * kProcHeight> g_gray_proc = {};
-std::array<uint8, kProcWidth * kProcHeight> g_binary_proc = {};
 
 std::atomic<uint32> g_processed_frame_seq(0);
 std::atomic<uint32> g_last_capture_wait_us(0);
 std::atomic<uint32> g_last_preprocess_us(0);
-std::atomic<uint32> g_last_otsu_us(0);
 std::atomic<uint32> g_last_total_us(0);
 std::atomic<uint32> g_last_red_detect_us(0);
-std::atomic<uint8> g_last_otsu_threshold(0);
 
 std::mutex g_state_mutex;
 bool g_red_found = false;
@@ -53,10 +50,8 @@ bool vision_image_processor_init(const char *camera_path)
     g_processed_frame_seq.store(0);
     g_last_capture_wait_us.store(0);
     g_last_preprocess_us.store(0);
-    g_last_otsu_us.store(0);
     g_last_total_us.store(0);
     g_last_red_detect_us.store(0);
-    g_last_otsu_threshold.store(0);
     vision_image_processor_set_red_rect(false, 0, 0, 0, 0, 0, 0, 0);
     vision_image_processor_set_ncnn_roi(false, 0, 0, 0, 0);
     return vision_frame_capture_init(camera_path);
@@ -82,34 +77,18 @@ bool vision_image_processor_process_step()
     }
 
     const auto t_pre_begin = std::chrono::steady_clock::now();
-    cv::Mat full(UVC_HEIGHT, UVC_WIDTH, CV_8UC3, g_bgr_full.data());
+    std::memcpy(g_bgr_proc.data(), g_bgr_full.data(), g_bgr_proc.size());
     cv::Mat proc(kProcHeight, kProcWidth, CV_8UC3, g_bgr_proc.data());
-    if (UVC_WIDTH == kProcWidth && UVC_HEIGHT == kProcHeight)
-    {
-        std::memcpy(g_bgr_proc.data(), g_bgr_full.data(), g_bgr_proc.size());
-    }
-    else
-    {
-        cv::resize(full, proc, cv::Size(kProcWidth, kProcHeight), 0.0, 0.0, cv::INTER_AREA);
-    }
 
     cv::Mat gray(kProcHeight, kProcWidth, CV_8UC1, g_gray_proc.data());
     cv::cvtColor(proc, gray, cv::COLOR_BGR2GRAY);
     const auto t_pre_end = std::chrono::steady_clock::now();
 
-    const auto t_otsu_begin = t_pre_end;
-    cv::Mat binary(kProcHeight, kProcWidth, CV_8UC1, g_binary_proc.data());
-    const double otsu_value = cv::threshold(gray, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-    const auto t_otsu_end = std::chrono::steady_clock::now();
-
     g_last_capture_wait_us.store(capture_wait_us);
     g_last_preprocess_us.store(static_cast<uint32>(
         std::chrono::duration_cast<std::chrono::microseconds>(t_pre_end - t_pre_begin).count()));
-    g_last_otsu_us.store(static_cast<uint32>(
-        std::chrono::duration_cast<std::chrono::microseconds>(t_otsu_end - t_otsu_begin).count()));
     g_last_total_us.store(static_cast<uint32>(
-        std::chrono::duration_cast<std::chrono::microseconds>(t_otsu_end - t_begin).count()));
-    g_last_otsu_threshold.store(static_cast<uint8>(std::clamp(static_cast<int>(std::lround(otsu_value)), 0, 255)));
+        std::chrono::duration_cast<std::chrono::microseconds>(t_pre_end - t_begin).count()));
     g_processed_frame_seq.fetch_add(1);
     return true;
 }
@@ -130,11 +109,6 @@ const uint8 *vision_image_processor_gray_image()
     return g_gray_proc.data();
 }
 
-const uint8 *vision_image_processor_binary_u8_image()
-{
-    return g_binary_proc.data();
-}
-
 const uint8 *vision_image_processor_bgr_image()
 {
     return g_bgr_proc.data();
@@ -150,11 +124,6 @@ const uint8 *vision_image_processor_gray_downsampled_image()
     return g_gray_proc.data();
 }
 
-const uint8 *vision_image_processor_binary_downsampled_u8_image()
-{
-    return g_binary_proc.data();
-}
-
 const uint8 *vision_image_processor_bgr_downsampled_image()
 {
     return g_bgr_proc.data();
@@ -162,20 +131,13 @@ const uint8 *vision_image_processor_bgr_downsampled_image()
 
 void vision_image_processor_get_last_perf_us(uint32 *capture_wait_us,
                                              uint32 *preprocess_us,
-                                             uint32 *otsu_us,
                                              uint32 *maze_us,
                                              uint32 *total_us)
 {
     if (capture_wait_us != nullptr) *capture_wait_us = g_last_capture_wait_us.load();
     if (preprocess_us != nullptr) *preprocess_us = g_last_preprocess_us.load();
-    if (otsu_us != nullptr) *otsu_us = g_last_otsu_us.load();
     if (maze_us != nullptr) *maze_us = 0;
     if (total_us != nullptr) *total_us = g_last_total_us.load();
-}
-
-uint8 vision_image_processor_get_last_otsu_threshold()
-{
-    return g_last_otsu_threshold.load();
 }
 
 void vision_image_processor_get_last_red_detect_us(uint32 *red_detect_us)

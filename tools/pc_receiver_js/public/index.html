@@ -449,6 +449,8 @@
         setList(summaryList, [
           ['capture_thread_fps', formatValue(status.capture_thread_fps)],
           ['vision_process_fps', formatValue(status.vision_process_fps)],
+          ['infer_thread_fps', formatValue(status.infer_thread_fps)],
+          ['cpu_usage_percent(%)', formatValue(status.cpu_usage_percent)],
           ['udp_tx_fps', formatValue(status.udp_tx_fps)],
           ['otsu_threshold', formatValue(status.otsu_threshold)],
           ['gray_size', formatRect(status.gray_size)],

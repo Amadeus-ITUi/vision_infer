@@ -3,7 +3,8 @@
 set -u
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-OUT_DIR="$SCRIPT_DIR/../out"
+OUT_DIR="$SCRIPT_DIR/out"
+LEGACY_OUT_DIR="$SCRIPT_DIR/../out"
 CONFIG_FILE="$SCRIPT_DIR/build_target.env"
 CONNECTION_PRESETS_FILE="$SCRIPT_DIR/connection_presets.json"
 SYNC_TOML_SCRIPT="$SCRIPT_DIR/sync_connection_preset_to_toml.js"
@@ -17,6 +18,7 @@ TARGET_APP_PATH="/home/root/tst"
 TARGET_CONFIG_PATH="/home/root/tst/smartcar_config.toml"
 MAKE_JOBS="12"
 CAMERA_CAPTURE_WIDTH="320"
+CAMERA_CAPTURE_FPS="120"
 
 print_usage() {
     cat <<EOF
@@ -28,6 +30,11 @@ print_usage() {
     ./build.sh --preset hotspot_b
     ./build.sh --camera-width 160
     ./build.sh --camera-width 320
+    ./build.sh --camera-width 640
+    ./build.sh --camera-fps 60
+    ./build.sh --camera-fps 90
+    ./build.sh --camera-fps 120
+    ./build.sh --camera-fps 180
     ./build.sh --jobs 16
 
 说明:
@@ -43,6 +50,7 @@ print_usage() {
      app_path=$TARGET_APP_PATH
      config_path=$TARGET_CONFIG_PATH
      camera_width=$CAMERA_CAPTURE_WIDTH
+     camera_fps=$CAMERA_CAPTURE_FPS
 EOF
 }
 
@@ -132,6 +140,10 @@ while [ $# -gt 0 ]; do
             CAMERA_CAPTURE_WIDTH="$2"
             shift 2
             ;;
+        --camera-fps)
+            CAMERA_CAPTURE_FPS="$2"
+            shift 2
+            ;;
         -h|--help)
             print_usage
             exit 0
@@ -149,14 +161,41 @@ if [ -z "$TARGET_HOST" ] || [ -z "$TARGET_USER" ]; then
     exit 1
 fi
 
-if [ "$CAMERA_CAPTURE_WIDTH" != "160" ] && [ "$CAMERA_CAPTURE_WIDTH" != "320" ]; then
-    echo "CAMERA_CAPTURE_WIDTH 仅支持 160 或 320，当前: $CAMERA_CAPTURE_WIDTH"
+if [ "$CAMERA_CAPTURE_WIDTH" != "160" ] && [ "$CAMERA_CAPTURE_WIDTH" != "320" ] && [ "$CAMERA_CAPTURE_WIDTH" != "640" ]; then
+    echo "CAMERA_CAPTURE_WIDTH 仅支持 160 / 320 / 640，当前: $CAMERA_CAPTURE_WIDTH"
     exit 1
+fi
+
+if [ "$CAMERA_CAPTURE_FPS" != "60" ] && [ "$CAMERA_CAPTURE_FPS" != "90" ] && [ "$CAMERA_CAPTURE_FPS" != "120" ] && [ "$CAMERA_CAPTURE_FPS" != "180" ]; then
+    echo "CAMERA_CAPTURE_FPS 仅支持 60 / 90 / 120 / 180，当前: $CAMERA_CAPTURE_FPS"
+    exit 1
+fi
+
+if [ ! -d "$OUT_DIR" ] && [ -d "$LEGACY_OUT_DIR" ]; then
+    OUT_DIR="$LEGACY_OUT_DIR"
+fi
+
+if [ ! -d "$OUT_DIR" ]; then
+    mkdir -p "$OUT_DIR" || {
+        echo "创建输出目录失败: $OUT_DIR"
+        exit 1
+    }
 fi
 
 UVC_RES_PRESET="1"
 if [ "$CAMERA_CAPTURE_WIDTH" = "160" ]; then
     UVC_RES_PRESET="0"
+elif [ "$CAMERA_CAPTURE_WIDTH" = "640" ]; then
+    UVC_RES_PRESET="2"
+fi
+
+UVC_FPS_PRESET="2"
+if [ "$CAMERA_CAPTURE_FPS" = "60" ]; then
+    UVC_FPS_PRESET="0"
+elif [ "$CAMERA_CAPTURE_FPS" = "90" ]; then
+    UVC_FPS_PRESET="1"
+elif [ "$CAMERA_CAPTURE_FPS" = "180" ]; then
+    UVC_FPS_PRESET="3"
 fi
 
 echo "[BUILD] 目标预设: ${TARGET_PRESET}"
@@ -164,6 +203,7 @@ echo "[BUILD] 目标主板: ${TARGET_USER}@${TARGET_HOST}:${TARGET_PORT}"
 echo "[BUILD] APP 目标路径: ${TARGET_APP_PATH}"
 echo "[BUILD] 配置目标路径: ${TARGET_CONFIG_PATH}"
 echo "[BUILD] 摄像头采图宽度: ${CAMERA_CAPTURE_WIDTH} (UVC_RES_PRESET=${UVC_RES_PRESET})"
+echo "[BUILD] 摄像头采图帧率: ${CAMERA_CAPTURE_FPS} (UVC_FPS_PRESET=${UVC_FPS_PRESET})"
 
 node "$SYNC_TOML_SCRIPT" "$CONNECTION_PRESETS_FILE" "$TARGET_PRESET" "$SCRIPT_DIR/smartcar_config.toml" || {
     echo "同步 smartcar_config.toml 中的电脑接收端 IP 失败。"
@@ -180,7 +220,7 @@ find . -mindepth 1 ! -name "本文件夹作用.txt" -exec rm -rf {} + || {
     exit 1
 }
 
-cmake ../user -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DUVC_RES_PRESET="${UVC_RES_PRESET}" || {
+cmake "$SCRIPT_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DUVC_RES_PRESET="${UVC_RES_PRESET}" -DUVC_FPS_PRESET="${UVC_FPS_PRESET}" || {
     echo "cmake 命令执行失败。"
     exit 1
 }
@@ -192,14 +232,20 @@ make -j"$MAKE_JOBS" || {
 }
 
 echo "生成APP"
-parent_dir_name=$(basename "$(dirname "$(pwd)")")
+app_binary_name=$(basename "$(dirname "$SCRIPT_DIR")")
+app_binary_path="$OUT_DIR/$app_binary_name"
 
-scp -O -P "$TARGET_PORT" "$parent_dir_name" "${TARGET_USER}@${TARGET_HOST}:${TARGET_APP_PATH}" || {
+if [ ! -f "$app_binary_path" ]; then
+    echo "找不到可执行文件: $app_binary_path"
+    exit 1
+fi
+
+scp -O -P "$TARGET_PORT" "$app_binary_path" "${TARGET_USER}@${TARGET_HOST}:${TARGET_APP_PATH}" || {
     echo "APP 传输失败。"
     exit 1
 }
 
-scp -O -P "$TARGET_PORT" ../user/smartcar_config.toml "${TARGET_USER}@${TARGET_HOST}:${TARGET_CONFIG_PATH}" || {
+scp -O -P "$TARGET_PORT" "$SCRIPT_DIR/smartcar_config.toml" "${TARGET_USER}@${TARGET_HOST}:${TARGET_CONFIG_PATH}" || {
     echo "配置文件传输失败。"
     exit 1
 }
