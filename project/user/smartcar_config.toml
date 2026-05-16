@@ -11,6 +11,16 @@
 schema_version = 1
 
 [vision.runtime]
+# 是否开启离线图片推理模式。
+# true：跳过摄像头/网页/UART，只读取 image/ 目录中的 64x64 ROI 图逐张推理并自动退出。
+# false：运行当前摄像头视觉主流程。
+offline_image_infer_mode = true
+
+# 离线推理准确率输出模式。
+# 1：只输出总准确率。
+# 2：输出总准确率和错例列表。
+offline_image_accuracy_report_mode = 1
+
 # 是否开启整条推理链。
 # true：执行红框识别和 ncnn 推理。
 # false：只做基础图像处理，不产出红框和推理结果。
@@ -19,7 +29,7 @@ infer_enabled = true
 # 是否开启 ncnn 分类。
 # true：红框识别成功后继续做 ROI 分类。
 # false：只保留红框和 ROI，不做分类。
-ncnn_enabled = false
+ncnn_enabled = true
 
 [vision.runtime.ncnn]
 # ncnn 模型输入宽度。
@@ -31,11 +41,37 @@ input_height = 64
 
 # 标签数量。
 # 必须和下面 labels 数组长度完全一致。
-label_count = 3
+label_count = 6
 
 # 类别标签表。
 # 顺序必须与模型输出类别顺序一致。
-labels = ["supplies", "vehicles", "weapons"]
+labels = ["ambulance", "armored_car", "bomb", "gun", "medicine", "telescope"]
+
+[vision.runtime.red_detect.search]
+# 红框搜索区采用“画面中心线 + 底部 80%”语义。
+# x 方向默认覆盖全幅，y 方向只保留下 80%。
+x_min_permille = 0
+x_max_permille = 1000
+y_min_permille = 200
+y_max_permille = 1000
+
+[vision.runtime.red_detect.roi]
+# 红色 HSV 检测参数（OpenCV HSV：H 0~179, S/V 0~255）。
+h_span = 12
+s_min = 50
+v_min = 50
+
+# 形态学后处理。
+close_iter = 1
+open_iter = 1
+
+# 最小红色区域面积。
+area_min = 50
+
+# 红框 -> ncnn ROI 裁剪比例。
+ratio_w = 1.2
+ratio_h = 1.2
+offset_ratio = 0.0
 
 [vision.runtime.web]
 # 是否开启网页图像发送。

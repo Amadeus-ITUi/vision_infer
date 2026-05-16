@@ -154,15 +154,42 @@
       min-height: 18px;
     }
 
+    .hover-readout {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--accent);
+      min-height: 18px;
+      font-family: "JetBrains Mono", "Consolas", monospace;
+    }
+
+
     .stats {
       display: grid;
       gap: 10px;
+    }
+
+    .summary-top {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+      gap: 10px;
+      align-items: stretch;
     }
 
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .metric-stat {
+      background: linear-gradient(180deg, rgba(7, 17, 31, 0.98), rgba(4, 12, 23, 0.98));
+      border: 1px solid rgba(94, 234, 212, 0.18);
     }
 
     .stat {
@@ -223,6 +250,7 @@
     }
 
     @media (max-width: 760px) {
+      .summary-top,
       .frame-grid,
       .stat-grid {
         grid-template-columns: 1fr;
@@ -283,11 +311,12 @@
             </div>
             <div class="frame-panel">
               <div class="frame-title">
-                <span>二值图</span>
-                <span class="badge" id="binaryBadge">未就绪</span>
+                <span>HSV 条带（x=0.25W~0.75W）</span>
+                <span class="badge" id="hsvStripBadge">未就绪</span>
               </div>
-              <img id="binaryImage" alt="binary frame" />
-              <div class="frame-note" id="binaryNote">当前通常关闭，仅在需要时查看。</div>
+              <img id="hsvStripImage" alt="hsv strip frame" />
+              <div class="frame-note" id="hsvStripNote">该画面由主板按识别同流程输出（Gray->OTSU白区->HSV->红色双区间）。</div>
+              <div class="hover-readout" id="hsvHoverValue">HSV: --</div>
             </div>
           </div>
         </section>
@@ -297,22 +326,38 @@
         <section class="card">
           <h2>运行摘要</h2>
           <div class="stats">
-            <div class="stat-grid">
-              <div class="stat">
-                <div class="stat-label">红框</div>
-                <div class="stat-value" id="redFoundValue">--</div>
+            <div class="summary-top">
+              <div class="stat-grid">
+                <div class="stat">
+                  <div class="stat-label">红框</div>
+                  <div class="stat-value" id="redFoundValue">--</div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">ROI</div>
+                  <div class="stat-value" id="roiValidValue">--</div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">Top1 类别</div>
+                  <div class="stat-value" id="topLabelValue">--</div>
+                </div>
+                <div class="stat">
+                  <div class="stat-label">Top1 分数</div>
+                  <div class="stat-value" id="topScoreValue">--</div>
+                </div>
               </div>
-              <div class="stat">
-                <div class="stat-label">ROI</div>
-                <div class="stat-value" id="roiValidValue">--</div>
-              </div>
-              <div class="stat">
-                <div class="stat-label">Top1 类别</div>
-                <div class="stat-value" id="topLabelValue">--</div>
-              </div>
-              <div class="stat">
-                <div class="stat-label">Top1 分数</div>
-                <div class="stat-value" id="topScoreValue">--</div>
+              <div class="metric-grid">
+                <div class="stat metric-stat">
+                  <div class="stat-label">当前 CPU 占用率</div>
+                  <div class="stat-value" id="cpuUsageCardValue">--</div>
+                </div>
+                <div class="stat metric-stat">
+                  <div class="stat-label">红框识别耗时</div>
+                  <div class="stat-value" id="redDetectMsValue">--</div>
+                </div>
+                <div class="stat metric-stat">
+                  <div class="stat-label">模型推理耗时</div>
+                  <div class="stat-value" id="inferMsValue">--</div>
+                </div>
               </div>
             </div>
             <div class="list" id="summaryList"></div>
@@ -340,22 +385,25 @@
       rgb: document.getElementById('rgbImage'),
       roi64: document.getElementById('roiImage'),
       gray: document.getElementById('grayImage'),
-      binary: document.getElementById('binaryImage')
+      hsv_strip: document.getElementById('hsvStripImage')
     };
 
     const badgeEls = {
       rgb: document.getElementById('rgbBadge'),
       roi64: document.getElementById('roiBadge'),
       gray: document.getElementById('grayBadge'),
-      binary: document.getElementById('binaryBadge')
+      hsv_strip: document.getElementById('hsvStripBadge')
     };
 
     const noteEls = {
       rgb: document.getElementById('rgbNote'),
       roi64: document.getElementById('roiNote'),
       gray: document.getElementById('grayNote'),
-      binary: document.getElementById('binaryNote')
+      hsv_strip: document.getElementById('hsvStripNote')
     };
+    const hsvHoverValue = document.getElementById('hsvHoverValue');
+    const hsvProbeCanvas = document.createElement('canvas');
+    const hsvProbeCtx = hsvProbeCanvas.getContext('2d', { willReadFrequently: true });
 
     const runtimePill = document.getElementById('runtimePill');
     const profilePill = document.getElementById('profilePill');
@@ -363,6 +411,9 @@
     const roiValidValue = document.getElementById('roiValidValue');
     const topLabelValue = document.getElementById('topLabelValue');
     const topScoreValue = document.getElementById('topScoreValue');
+    const cpuUsageCardValue = document.getElementById('cpuUsageCardValue');
+    const redDetectMsValue = document.getElementById('redDetectMsValue');
+    const inferMsValue = document.getElementById('inferMsValue');
     const summaryList = document.getElementById('summaryList');
     const inferList = document.getElementById('inferList');
     const transportList = document.getElementById('transportList');
@@ -383,6 +434,20 @@
       return `[${rect.join(', ')}]`;
     }
 
+    function formatMsFromUs(value) {
+      if (value === null || value === undefined || value === '') return '--';
+      const us = Number(value);
+      if (!Number.isFinite(us)) return '--';
+      return `${(us / 1000).toFixed(3)} ms`;
+    }
+
+    function formatPercent(value) {
+      if (value === null || value === undefined || value === '') return '--';
+      const num = Number(value);
+      if (!Number.isFinite(num)) return '--';
+      return `${num.toFixed(2)} %`;
+    }
+
     function setList(container, rows) {
       container.innerHTML = '';
       for (const [name, value, cls] of rows) {
@@ -396,7 +461,7 @@
     function frameEndpoint(mode) {
       if (mode === 'rgb') return '/api/frame_rgb.jpg';
       if (mode === 'roi64') return '/api/frame_roi64.jpg';
-      if (mode === 'binary') return '/api/frame_binary.jpg';
+      if (mode === 'hsv_strip') return '/api/frame_hsv_strip.png';
       return '/api/frame_gray.jpg';
     }
 
@@ -420,10 +485,39 @@
         updateFrame('rgb', meta.rgb);
         updateFrame('roi64', meta.roi64);
         updateFrame('gray', meta.gray);
-        updateFrame('binary', meta.binary);
+        updateFrame('hsv_strip', meta.hsv_strip);
       } catch (err) {
         runtimePill.textContent = `图像刷新失败：${err.message || err}`;
       }
+    }
+
+    function bindHsvHoverProbe() {
+      const img = imgEls.hsv_strip;
+      if (!img || !hsvProbeCtx) return;
+
+      function updateHover(evt) {
+        if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
+          hsvHoverValue.textContent = 'HSV: --';
+          return;
+        }
+        const rect = img.getBoundingClientRect();
+        const rx = (evt.clientX - rect.left) / Math.max(rect.width, 1);
+        const ry = (evt.clientY - rect.top) / Math.max(rect.height, 1);
+        const px = Math.max(0, Math.min(img.naturalWidth - 1, Math.floor(rx * img.naturalWidth)));
+        const py = Math.max(0, Math.min(img.naturalHeight - 1, Math.floor(ry * img.naturalHeight)));
+        hsvProbeCanvas.width = img.naturalWidth;
+        hsvProbeCanvas.height = img.naturalHeight;
+        hsvProbeCtx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight);
+        const rgba = hsvProbeCtx.getImageData(px, py, 1, 1).data;
+        // sender: HSV 存储到 OpenCV 的 B/G/R 通道，因此浏览器侧对应 B/H、G/S、R/V。
+        const h = rgba[2];
+        const s = rgba[1];
+        const v = rgba[0];
+        hsvHoverValue.textContent = `x=${px}, y=${py}, H=${h}, S=${s}, V=${v}`;
+      }
+
+      img.addEventListener('mousemove', updateHover);
+      img.addEventListener('mouseleave', () => { hsvHoverValue.textContent = 'HSV: --'; });
     }
 
     async function refreshStatus() {
@@ -445,14 +539,15 @@
         roiValidValue.textContent = roiValid ? '有效' : '无效';
         topLabelValue.textContent = inferValid ? formatValue(status.ncnn_top_label) : '--';
         topScoreValue.textContent = inferValid ? formatValue(status.ncnn_top_score) : '--';
+        cpuUsageCardValue.textContent = formatPercent(status.cpu_usage_percent);
+        redDetectMsValue.textContent = formatMsFromUs(status.red_detect_us);
+        inferMsValue.textContent = inferValid ? formatMsFromUs(status.ncnn_infer_us) : '--';
 
         setList(summaryList, [
           ['capture_thread_fps', formatValue(status.capture_thread_fps)],
           ['vision_process_fps', formatValue(status.vision_process_fps)],
           ['infer_thread_fps', formatValue(status.infer_thread_fps)],
-          ['cpu_usage_percent(%)', formatValue(status.cpu_usage_percent)],
           ['udp_tx_fps', formatValue(status.udp_tx_fps)],
-          ['otsu_threshold', formatValue(status.otsu_threshold)],
           ['gray_size', formatRect(status.gray_size)],
           ['roi64_size', formatRect(status.roi64_size)]
         ]);
@@ -462,7 +557,8 @@
           ['ncnn_enabled', formatValue(status.ncnn_enabled), status.ncnn_enabled ? 'ok' : 'warn'],
           ['ncnn_has_result', formatValue(status.ncnn_has_result)],
           ['ncnn_infer_valid', formatValue(status.ncnn_infer_valid), inferValid ? 'ok' : 'warn'],
-          ['ncnn_infer_us', formatValue(status.ncnn_infer_us)],
+          ['red_detect_ms', formatMsFromUs(status.red_detect_us)],
+          ['ncnn_infer_ms', formatMsFromUs(status.ncnn_infer_us)],
           ['ncnn_top_class_id', formatValue(status.ncnn_top_class_id)],
           ['red_rect', formatRect(status.red)],
           ['roi_rect', formatRect(status.roi)]
@@ -473,7 +569,7 @@
           ['rx_udp_frames_per_sec', formatValue(status.rx_udp_frames_per_sec)],
           ['rx_udp_rgb_fps', formatValue(status.rx_udp_rgb_fps)],
           ['rx_udp_gray_fps', formatValue(status.rx_udp_gray_fps)],
-          ['rx_udp_binary_fps', formatValue(status.rx_udp_binary_fps)],
+          ['rx_udp_hsv_strip_fps', formatValue(status.rx_udp_hsv_strip_fps)],
           ['rx_udp_roi64_fps', formatValue(status.rx_udp_roi64_fps)],
           ['capture_wait_us', formatValue(status.capture_wait_us)],
           ['preprocess_us', formatValue(status.preprocess_us)],
@@ -486,6 +582,7 @@
 
     refreshStatus();
     refreshFrames();
+    bindHsvHoverProbe();
     setInterval(refreshStatus, 400);
     setInterval(refreshFrames, 500);
   </script>

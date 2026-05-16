@@ -23,6 +23,8 @@ typedef enum
 typedef struct
 {
     // 推理运行控制。
+    bool offline_image_infer_mode;
+    int offline_image_accuracy_report_mode;
     bool infer_enabled;
     bool ncnn_enabled;
 
@@ -44,6 +46,25 @@ typedef struct
     const char *udp_web_server_ip;
     uint16 udp_web_video_port;
     uint16 udp_web_meta_port;
+
+    // 红框检测参数：搜索区（千分比，基于处理图宽高）。
+    int red_search_x_min_permille;
+    int red_search_x_max_permille;
+    int red_search_y_min_permille;
+    int red_search_y_max_permille;
+
+    // 红框检测参数：HSV 双区间（仅红色）。
+    int red_roi_h_span;
+    int red_roi_s_min;
+    int red_roi_v_min;
+    int red_roi_close_iter;
+    int red_roi_open_iter;
+    int red_roi_area_min;
+
+    // 红框 -> ncnn ROI 裁剪参数。
+    float red_roi_ratio_w;
+    float red_roi_ratio_h;
+    float red_roi_offset_ratio;
 } vision_runtime_config_t;
 
 typedef struct

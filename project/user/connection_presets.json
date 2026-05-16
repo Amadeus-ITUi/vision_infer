@@ -8,13 +8,13 @@
       "board_ssh_host": "172.21.79.241",
       "board_ssh_port": 22,
       "board_ssh_user": "root",
-      "board_ssh_target_path": "/home/root/tst/smartcar_config.toml",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
       "pc_receiver_ip": "172.21.79.179",
       "build_target_host": "172.21.79.241",
       "build_target_user": "root",
       "build_target_port": 22,
-      "build_target_app_path": "/home/root/tst",
-      "build_target_config_path": "/home/root/tst/smartcar_config.toml"
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
     },
     {
       "id": "hotspot_c",
@@ -23,13 +23,13 @@
       "board_ssh_host": "172.21.79.138",
       "board_ssh_port": 22,
       "board_ssh_user": "root",
-      "board_ssh_target_path": "/home/root/tst/smartcar_config.toml",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
       "pc_receiver_ip": "172.21.79.179",
       "build_target_host": "172.21.79.138",
       "build_target_user": "root",
       "build_target_port": 22,
-      "build_target_app_path": "/home/root/tst",
-      "build_target_config_path": "/home/root/tst/smartcar_config.toml"
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
     },
     {
       "id": "hotspot_b",
@@ -38,13 +38,13 @@
       "board_ssh_host": "10.119.73.138",
       "board_ssh_port": 22,
       "board_ssh_user": "root",
-      "board_ssh_target_path": "/home/root/tst/smartcar_config.toml",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
       "pc_receiver_ip": "10.119.73.102",
       "build_target_host": "10.119.73.138",
       "build_target_user": "root",
       "build_target_port": 22,
-      "build_target_app_path": "/home/root/tst",
-      "build_target_config_path": "/home/root/tst/smartcar_config.toml"
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
     },
     {
       "id": "hotspot_d",
@@ -53,13 +53,13 @@
       "board_ssh_host": "172.21.79.241",
       "board_ssh_port": 22,
       "board_ssh_user": "root",
-      "board_ssh_target_path": "/home/root/tst/smartcar_config.toml",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
       "pc_receiver_ip": "172.21.79.129",
       "build_target_host": "172.21.79.241",
       "build_target_user": "root",
       "build_target_port": 22,
-      "build_target_app_path": "/home/root/tst",
-      "build_target_config_path": "/home/root/tst/smartcar_config.toml"
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
     },
     {
       "id": "hotspot_a",
@@ -68,13 +68,43 @@
       "board_ssh_host": "172.21.79.138",
       "board_ssh_port": 22,
       "board_ssh_user": "root",
-      "board_ssh_target_path": "/home/root/tst/smartcar_config.toml",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
       "pc_receiver_ip": "172.21.79.129",
       "build_target_host": "172.21.79.138",
       "build_target_user": "root",
       "build_target_port": 22,
-      "build_target_app_path": "/home/root/tst",
-      "build_target_config_path": "/home/root/tst/smartcar_config.toml"
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
+    },
+    {
+      "id": "hotspot_f",
+      "label": "热点 F",
+      "board_config_base_url": "http://172.21.79.233:18080",
+      "board_ssh_host": "172.21.79.233",
+      "board_ssh_port": 22,
+      "board_ssh_user": "root",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
+      "pc_receiver_ip": "172.21.79.129",
+      "build_target_host": "172.21.79.233",
+      "build_target_user": "root",
+      "build_target_port": 22,
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
+    },
+    {
+      "id": "hotspot_g",
+      "label": "热点 G",
+      "board_config_base_url": "http://172.21.79.53:18080",
+      "board_ssh_host": "172.21.79.53",
+      "board_ssh_port": 22,
+      "board_ssh_user": "root",
+      "board_ssh_target_path": "/home/root/infer/smartcar_config.toml",
+      "pc_receiver_ip": "172.21.79.129",
+      "build_target_host": "172.21.79.53",
+      "build_target_user": "root",
+      "build_target_port": 22,
+      "build_target_app_path": "/home/root/infer",
+      "build_target_config_path": "/home/root/infer/smartcar_config.toml"
     }
   ]
 }

@@ -13,10 +13,14 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <fstream>
+#include <limits.h>
 #include <limits>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <unistd.h>
 
 namespace
 {
@@ -25,21 +29,6 @@ static constexpr int kProcWidth = VISION_DOWNSAMPLED_WIDTH;
 static constexpr int kProcHeight = VISION_DOWNSAMPLED_HEIGHT;
 static constexpr int kFullWidth = UVC_WIDTH;
 static constexpr int kFullHeight = UVC_HEIGHT;
-
-static constexpr int kRefProcWidth = 160;
-static constexpr int kRefProcHeight = 120;
-static constexpr int kRefProcPixels = kRefProcWidth * kRefProcHeight;
-
-// 红框搜索区域参数（以 x=80 竖线附近搜索）。
-static constexpr int kRedSearchExpandXRef = 28;
-static constexpr int kRedSearchCenterXRef = 80;
-static constexpr int kRedSearchMinWRef = 48;
-static constexpr int kRedSearchMinHRef = 36;
-
-// 红框连通域筛选阈值（面积范围与目标面积）。
-static constexpr int kRedExpectedAreaPxRef = 60;
-static constexpr int kRedAreaMinPxRef = 20;
-static constexpr int kRedAreaMaxPxRef = 450;
 
 struct infer_job_t
 {
@@ -90,101 +79,41 @@ static uint32 g_latest_infer_result_seq = 0;
 static std::atomic<uint32> g_infer_fps(0);
 
 // 作用：参考分辨率参数缩放到当前处理分辨率。
-static inline int scale_by_width(int ref_px)
-{
-    if (ref_px <= 0)
-    {
-        return 0;
-    }
-    return std::max(1, (ref_px * kProcWidth + kRefProcWidth / 2) / kRefProcWidth);
-}
-
-static inline int scale_by_height(int ref_px)
-{
-    if (ref_px <= 0)
-    {
-        return 0;
-    }
-    return std::max(1, (ref_px * kProcHeight + kRefProcHeight / 2) / kRefProcHeight);
-}
-
-static inline int scale_by_area(int ref_area_px)
-{
-    if (ref_area_px <= 0)
-    {
-        return 0;
-    }
-    const int64_t scaled = static_cast<int64_t>(ref_area_px) * kProcWidth * kProcHeight;
-    return std::max(1, static_cast<int>((scaled + kRefProcPixels / 2) / kRefProcPixels));
-}
-
 static cv::Rect build_ncnn_proc_roi_from_red_rect(int red_x_proc,
                                                   int red_y_proc,
                                                   int red_w_proc,
                                                   int red_h_proc)
 {
-    // 对齐 vision_specific：
-    // 1. 以红框上边中点作为 ROI 中心；
-    // 2. ROI 为正方形；
-    // 3. 边长 = 红框宽 * 3 / 2。
-    const int side_proc = std::max(1, (std::max(1, red_w_proc) * 3) / 2);
-    const int center_x_proc = red_x_proc + red_w_proc / 2;
-    const int center_y_proc = red_y_proc;
+    const float ratio_w = std::max(0.01f, g_vision_runtime_config.red_roi_ratio_w);
+    const float ratio_h = std::max(0.01f, g_vision_runtime_config.red_roi_ratio_h);
+    const float offset_ratio = std::max(0.0f, g_vision_runtime_config.red_roi_offset_ratio);
+    const int bw = std::max(1, red_w_proc);
+    const int lift = static_cast<int>(std::lround(static_cast<float>(bw) * offset_ratio));
+    const int anchor_y = red_y_proc + red_h_proc - lift;
+    const int roi_w = std::max(3, static_cast<int>(std::lround(static_cast<float>(bw) * ratio_w)));
+    const int roi_h = std::max(3, static_cast<int>(std::lround(static_cast<float>(bw) * ratio_h)));
+    int roi_x = static_cast<int>(std::lround(static_cast<float>(red_x_proc) + (static_cast<float>(bw - roi_w) * 0.5f)));
+    int roi_y = anchor_y - roi_h;
 
-    int roi_x_proc = center_x_proc - side_proc / 2;
-    int roi_y_proc = center_y_proc - side_proc / 2;
-    roi_x_proc = std::clamp(roi_x_proc, 0, std::max(0, kProcWidth - side_proc));
-    roi_y_proc = std::clamp(roi_y_proc, 0, std::max(0, kProcHeight - side_proc));
-    return cv::Rect(roi_x_proc, roi_y_proc, side_proc, side_proc) & cv::Rect(0, 0, kProcWidth, kProcHeight);
+    roi_x = std::clamp(roi_x, 0, std::max(0, kProcWidth - roi_w));
+    roi_y = std::clamp(roi_y, 0, std::max(0, kProcHeight - roi_h));
+    return cv::Rect(roi_x, roi_y, roi_w, roi_h) & cv::Rect(0, 0, kProcWidth, kProcHeight);
 }
 
-static cv::Rect fallback_center_roi()
-{
-    const int rw = std::clamp(kProcWidth / 2, scale_by_width(kRedSearchMinWRef), kProcWidth);
-    const int rh = std::clamp(kProcHeight / 2, scale_by_height(kRedSearchMinHRef), kProcHeight);
-    int rx = (kProcWidth - rw) / 2;
-    int ry = (kProcHeight - rh) / 2;
-    rx = std::clamp(rx, 0, std::max(0, kProcWidth - rw));
-    ry = std::clamp(ry, 0, std::max(0, kProcHeight - rh));
-    return cv::Rect(rx, ry, rw, rh);
-}
-
-// 作用：在 x=80 附近生成红框搜索 ROI。
+// 作用：以画面中心线为参考，只搜索图像下 80% 区域。
 static cv::Rect build_red_search_roi_from_x_line()
 {
-    const int kExpandX = scale_by_width(kRedSearchExpandXRef);
-    const int kMinRoiW = scale_by_width(kRedSearchMinWRef);
-    const int kMinRoiH = std::min(kProcHeight, scale_by_height(kRedSearchMinHRef));
-    const int center_x = std::clamp(scale_by_width(kRedSearchCenterXRef), 0, kProcWidth - 1);
-
-    int x0 = std::max(0, center_x - kExpandX);
-    int x1 = std::min(kProcWidth - 1, center_x + kExpandX);
-    int y0 = 0;
-    int y1 = kProcHeight - 1;
-
-    int rw = x1 - x0 + 1;
-    int rh = y1 - y0 + 1;
-    if (rw < kMinRoiW)
-    {
-        const int cx = (x0 + x1) / 2;
-        x0 = std::max(0, cx - kMinRoiW / 2);
-        x1 = std::min(kProcWidth - 1, x0 + kMinRoiW - 1);
-        x0 = std::max(0, x1 - kMinRoiW + 1);
-        rw = x1 - x0 + 1;
-    }
-    if (rh < kMinRoiH)
-    {
-        const int cy = (y0 + y1) / 2;
-        y0 = std::max(0, cy - kMinRoiH / 2);
-        y1 = std::min(kProcHeight - 1, y0 + kMinRoiH - 1);
-        y0 = std::max(0, y1 - kMinRoiH + 1);
-        rh = y1 - y0 + 1;
-    }
-    if (rw <= 0 || rh <= 0)
-    {
-        return fallback_center_roi();
-    }
-    return cv::Rect(x0, y0, rw, rh);
+    const int x_min_pm = std::clamp(g_vision_runtime_config.red_search_x_min_permille, 0, 1000);
+    const int x_max_pm = std::clamp(g_vision_runtime_config.red_search_x_max_permille, 0, 1000);
+    const int y_min_pm = std::clamp(g_vision_runtime_config.red_search_y_min_permille, 0, 1000);
+    const int y_max_pm = std::clamp(g_vision_runtime_config.red_search_y_max_permille, 0, 1000);
+    const int center_x = kProcWidth / 2;
+    const int x0 = std::clamp((kProcWidth * x_min_pm) / 1000, 0, center_x);
+    const int x1 = std::clamp((kProcWidth * x_max_pm) / 1000, center_x + 1, kProcWidth);
+    const int y0 = std::clamp((kProcHeight * y_min_pm) / 1000, 0, std::max(0, kProcHeight - 1));
+    const int y1 = std::clamp((kProcHeight * y_max_pm) / 1000, y0 + 1, kProcHeight);
+    const cv::Rect roi(x0, y0, x1 - x0, y1 - y0);
+    return roi & cv::Rect(0, 0, kProcWidth, kProcHeight);
 }
 
 // 作用：在搜索 ROI 内找红色实心矩形。
@@ -202,79 +131,59 @@ static bool detect_red_rectangle_bbox(const cv::Mat &bgr, const cv::Rect &search
         return false;
     }
 
-    cv::Mat mask(roi.height, roi.width, CV_8UC1, cv::Scalar(0));
-    for (int y = 0; y < roi.height; ++y)
+    cv::Mat roi_hsv;
+    cv::cvtColor(bgr(roi), roi_hsv, cv::COLOR_BGR2HSV);
+
+    const int h_span = std::clamp(g_vision_runtime_config.red_roi_h_span, 0, 90);
+    const int s_min = std::clamp(g_vision_runtime_config.red_roi_s_min, 0, 255);
+    const int v_min = std::clamp(g_vision_runtime_config.red_roi_v_min, 0, 255);
+
+    cv::Mat mask_low;
+    cv::Mat mask_high;
+    cv::inRange(roi_hsv, cv::Scalar(0, s_min, v_min), cv::Scalar(h_span, 255, 255), mask_low);
+    cv::inRange(roi_hsv, cv::Scalar(180 - h_span, s_min, v_min), cv::Scalar(180, 255, 255), mask_high);
+    cv::Mat mask;
+    cv::bitwise_or(mask_low, mask_high, mask);
+
+    const cv::Mat kernel = cv::Mat::ones(3, 3, CV_8U);
+    const int close_iter = std::max(0, g_vision_runtime_config.red_roi_close_iter);
+    const int open_iter = std::max(0, g_vision_runtime_config.red_roi_open_iter);
+    if (close_iter > 0)
     {
-        const cv::Vec3b *src = bgr.ptr<cv::Vec3b>(roi.y + y);
-        uint8 *dst = mask.ptr<uint8>(y);
-        for (int x = 0; x < roi.width; ++x)
-        {
-            const cv::Vec3b &px = src[roi.x + x];
-            const int b = static_cast<int>(px[0]);
-            const int g = static_cast<int>(px[1]);
-            const int r = static_cast<int>(px[2]);
-            if (r >= 80 && (r - g) >= 28 && (r - b) >= 22)
-            {
-                dst[x] = 255;
-            }
-        }
+        cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, kernel, cv::Point(-1, -1), close_iter);
+    }
+    if (open_iter > 0)
+    {
+        cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel, cv::Point(-1, -1), open_iter);
     }
 
-    cv::Mat labels;
-    cv::Mat stats;
-    cv::Mat centroids;
-    const int comp_num = cv::connectedComponentsWithStats(mask, labels, stats, centroids, 8, CV_32S);
-    if (comp_num <= 1)
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    if (contours.empty())
     {
         return false;
     }
 
-    int best_label = -1;
-    int best_score = std::numeric_limits<int>::max();
-    int best_area = 0;
-    const int kAreaMinPx = scale_by_area(kRedAreaMinPxRef);
-    const int kAreaMaxPx = scale_by_area(kRedAreaMaxPxRef);
-    const int kExpectedAreaPx = scale_by_area(kRedExpectedAreaPxRef);
-    const int kMinCompW = scale_by_width(3);
-    const int kMinCompH = scale_by_height(3);
-    for (int i = 1; i < comp_num; ++i)
+    int best_index = -1;
+    double best_area = 0.0;
+    for (int i = 0; i < static_cast<int>(contours.size()); ++i)
     {
-        const int area = stats.at<int>(i, cv::CC_STAT_AREA);
-        const int w = stats.at<int>(i, cv::CC_STAT_WIDTH);
-        const int h = stats.at<int>(i, cv::CC_STAT_HEIGHT);
-        if (area < kAreaMinPx || area > kAreaMaxPx || w < kMinCompW || h < kMinCompH)
+        const double area = cv::contourArea(contours[i]);
+        if (area > best_area)
         {
-            continue;
-        }
-
-        const int side_min = std::min(w, h);
-        const int side_max = std::max(w, h);
-        if (side_min <= 0 || side_max > side_min * 6)
-        {
-            continue;
-        }
-
-        const int area_cost = std::abs(area - kExpectedAreaPx);
-        const int shape_cost = std::abs((w * 10) - (h * 24));
-        const int score = area_cost * 4 + shape_cost;
-        if (score < best_score || (score == best_score && area > best_area))
-        {
-            best_score = score;
-            best_label = i;
+            best_index = i;
             best_area = area;
         }
     }
 
-    if (best_label < 0)
+    if (best_index < 0 || best_area <= static_cast<double>(std::max(1, g_vision_runtime_config.red_roi_area_min)))
     {
         return false;
     }
 
-    *bbox = cv::Rect(stats.at<int>(best_label, cv::CC_STAT_LEFT) + roi.x,
-                     stats.at<int>(best_label, cv::CC_STAT_TOP) + roi.y,
-                     stats.at<int>(best_label, cv::CC_STAT_WIDTH),
-                     stats.at<int>(best_label, cv::CC_STAT_HEIGHT));
-    *area_px = best_area;
+    *bbox = cv::boundingRect(contours[best_index]) + roi.tl();
+    *bbox &= cv::Rect(0, 0, bgr.cols, bgr.rows);
+    *area_px = static_cast<int>(std::lround(best_area));
     return true;
 }
 
@@ -296,6 +205,98 @@ static bool ncnn_step(const uint8 *bgr_data,
 
     cv::Mat bgr(height, width, CV_8UC3, const_cast<uint8 *>(bgr_data));
     return g_ncnn->InferWithProbs(bgr, top_class_id, top_score, top_label, labels, probs, infer_us);
+}
+
+static bool file_exists(const std::string &path)
+{
+    return access(path.c_str(), R_OK) == 0;
+}
+
+static std::string executable_dir()
+{
+    char exe_path[PATH_MAX] = {0};
+    const ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len <= 0)
+    {
+        return "";
+    }
+    exe_path[len] = '\0';
+    const char *slash = std::strrchr(exe_path, '/');
+    if (slash == nullptr)
+    {
+        return "";
+    }
+    return std::string(exe_path, static_cast<size_t>(slash - exe_path));
+}
+
+static std::string join_path(const std::string &dir, const char *name)
+{
+    if (dir.empty())
+    {
+        return name;
+    }
+    return dir + "/" + name;
+}
+
+static void resolve_default_model_paths(std::string *param_path, std::string *bin_path, std::string *labels_path)
+{
+    const char *param_name = "tiny_classifier_fp32.ncnn.param";
+    const char *bin_name = "tiny_classifier_fp32.ncnn.bin";
+    const char *labels_name = "labels.txt";
+    const std::string exe_dir = executable_dir();
+    if (!exe_dir.empty())
+    {
+        const std::string model_dir = exe_dir + "/ncnn_model";
+        const std::string exe_param = join_path(model_dir, param_name);
+        const std::string exe_bin = join_path(model_dir, bin_name);
+        const std::string exe_labels = join_path(model_dir, labels_name);
+        if (file_exists(exe_param) && file_exists(exe_bin))
+        {
+            *param_path = exe_param;
+            *bin_path = exe_bin;
+            *labels_path = exe_labels;
+            return;
+        }
+    }
+
+    const std::string cwd_param = join_path("ncnn_model", param_name);
+    const std::string cwd_bin = join_path("ncnn_model", bin_name);
+    const std::string cwd_labels = join_path("ncnn_model", labels_name);
+    if (file_exists(cwd_param) && file_exists(cwd_bin))
+    {
+        *param_path = cwd_param;
+        *bin_path = cwd_bin;
+        *labels_path = cwd_labels;
+        return;
+    }
+
+    *param_path = param_name;
+    *bin_path = bin_name;
+    *labels_path = labels_name;
+}
+
+static std::vector<std::string> load_labels_from_file(const std::string &labels_path)
+{
+    std::ifstream input(labels_path);
+    if (!input.is_open())
+    {
+        return {};
+    }
+
+    std::vector<std::string> labels;
+    std::string line;
+    while (std::getline(input, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+        {
+            line.pop_back();
+        }
+        if (!line.empty())
+        {
+            labels.push_back(line);
+        }
+    }
+    return labels;
 }
 
 // 作用：清空异步任务与结果共享状态。
@@ -405,17 +406,17 @@ static void run_infer_worker()
 
 LQ_NCNN::LQ_NCNN()
     : m_initialized(false)
-    , m_input_width(96)
-    , m_input_height(96)
+    , m_input_width(64)
+    , m_input_height(64)
     , m_input_name("in0")
     , m_output_name("out0")
 {
     m_mean_vals[0] = 123.675f;
     m_mean_vals[1] = 116.28f;
     m_mean_vals[2] = 103.53f;
-    m_norm_vals[0] = 0.01712475f;
-    m_norm_vals[1] = 0.017507f;
-    m_norm_vals[2] = 0.01742919f;
+    m_norm_vals[0] = 1.0f / 58.395f;
+    m_norm_vals[1] = 1.0f / 57.12f;
+    m_norm_vals[2] = 1.0f / 57.375f;
 }
 
 bool LQ_NCNN::Init()
@@ -619,24 +620,29 @@ LQ_NCNN::~LQ_NCNN() = default;
 bool vision_infer_init_default_model(LQ_NCNN &ncnn)
 {
     // 默认模型配置：集中在此，替换模型时优先修改这里。
-    const std::string model_param = "tiny_classifier_fp32.ncnn.param";
-    const std::string model_bin = "tiny_classifier_fp32.ncnn.bin";
+    std::string model_param;
+    std::string model_bin;
+    std::string labels_path;
+    resolve_default_model_paths(&model_param, &model_bin, &labels_path);
     const int input_width = g_vision_runtime_config.ncnn_input_width;
     const int input_height = g_vision_runtime_config.ncnn_input_height;
-    std::vector<std::string> labels;
-    labels.reserve(g_vision_runtime_config.ncnn_label_count);
-    for (size_t i = 0; i < g_vision_runtime_config.ncnn_label_count &&
-                       i < VISION_NCNN_CONFIG_MAX_LABELS; ++i)
+    std::vector<std::string> labels = load_labels_from_file(labels_path);
+    if (labels.empty())
     {
-        const char *label = g_vision_runtime_config.ncnn_labels[i];
-        if (label == nullptr || label[0] == '\0')
+        labels.reserve(g_vision_runtime_config.ncnn_label_count);
+        for (size_t i = 0; i < g_vision_runtime_config.ncnn_label_count &&
+                           i < VISION_NCNN_CONFIG_MAX_LABELS; ++i)
         {
-            break;
+            const char *label = g_vision_runtime_config.ncnn_labels[i];
+            if (label == nullptr || label[0] == '\0')
+            {
+                break;
+            }
+            labels.emplace_back(label);
         }
-        labels.emplace_back(label);
     }
     float mean_vals[3] = {123.675f, 116.28f, 103.53f};
-    float norm_vals[3] = {0.01712475f, 0.017507f, 0.01742919f};
+    float norm_vals[3] = {1.0f / 58.395f, 1.0f / 57.12f, 1.0f / 57.375f};
 
     ncnn.SetModelPath(model_param, model_bin);
     ncnn.SetInputSize(input_width, input_height);

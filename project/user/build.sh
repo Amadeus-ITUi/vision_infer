@@ -14,8 +14,8 @@ TARGET_PRESET="hotspot_a"
 TARGET_HOST=""
 TARGET_USER="root"
 TARGET_PORT="22"
-TARGET_APP_PATH="/home/root/tst"
-TARGET_CONFIG_PATH="/home/root/tst/smartcar_config.toml"
+TARGET_APP_PATH="/home/root/infer"
+TARGET_CONFIG_PATH="/home/root/infer/smartcar_config.toml"
 MAKE_JOBS="12"
 CAMERA_CAPTURE_WIDTH="320"
 CAMERA_CAPTURE_FPS="120"
@@ -86,8 +86,8 @@ const values = [
   preset.build_target_host || preset.board_ssh_host || "",
   preset.build_target_user || preset.board_ssh_user || "root",
   String(preset.build_target_port || preset.board_ssh_port || 22),
-  preset.build_target_app_path || "/home/root/tst",
-  preset.build_target_config_path || preset.board_ssh_target_path || "/home/root/tst/smartcar_config.toml"
+  preset.build_target_app_path || "/home/root/infer",
+  preset.build_target_config_path || preset.board_ssh_target_path || "/home/root/infer/smartcar_config.toml"
 ];
 process.stdout.write(values.join("\n"));
 ' "$CONNECTION_PRESETS_FILE" "$TARGET_PRESET") || {
@@ -99,8 +99,8 @@ process.stdout.write(values.join("\n"));
     TARGET_HOST="${preset_values[0]:-}"
     TARGET_USER="${preset_values[1]:-}"
     TARGET_PORT="${preset_values[2]:-22}"
-    TARGET_APP_PATH="${preset_values[3]:-/home/root/tst}"
-    TARGET_CONFIG_PATH="${preset_values[4]:-/home/root/tst/smartcar_config.toml}"
+    TARGET_APP_PATH="${preset_values[3]:-/home/root/infer}"
+    TARGET_CONFIG_PATH="${preset_values[4]:-/home/root/infer/smartcar_config.toml}"
 }
 
 load_target_preset
@@ -234,19 +234,76 @@ make -j"$MAKE_JOBS" || {
 echo "生成APP"
 app_binary_name=$(basename "$(dirname "$SCRIPT_DIR")")
 app_binary_path="$OUT_DIR/$app_binary_name"
+ncnn_model_dir="$SCRIPT_DIR/ncnn_model"
+image_dir="$SCRIPT_DIR/image"
 
 if [ ! -f "$app_binary_path" ]; then
     echo "找不到可执行文件: $app_binary_path"
     exit 1
 fi
 
-scp -O -P "$TARGET_PORT" "$app_binary_path" "${TARGET_USER}@${TARGET_HOST}:${TARGET_APP_PATH}" || {
+ssh -p "$TARGET_PORT" "${TARGET_USER}@${TARGET_HOST}" "
+if [ -e '${TARGET_APP_PATH}' ] && [ ! -d '${TARGET_APP_PATH}' ]; then
+    echo 'TARGET_APP_PATH_EXISTS_AS_FILE'
+    exit 2
+fi
+mkdir -p '${TARGET_APP_PATH}'
+" >/tmp/vision_infer_ssh_prepare.log 2>&1
+ssh_status=$?
+if [ "$ssh_status" -ne 0 ]; then
+    if grep -q "TARGET_APP_PATH_EXISTS_AS_FILE" /tmp/vision_infer_ssh_prepare.log; then
+        echo "目标路径已存在同名文件，无法作为目录使用: ${TARGET_APP_PATH}"
+        echo "请先在主板上删除该文件，例如: rm -f ${TARGET_APP_PATH}"
+    else
+        echo "创建目标目录失败: ${TARGET_APP_PATH}"
+        cat /tmp/vision_infer_ssh_prepare.log
+    fi
+    rm -f /tmp/vision_infer_ssh_prepare.log
+    exit 1
+fi
+rm -f /tmp/vision_infer_ssh_prepare.log
+
+scp -O -P "$TARGET_PORT" "$app_binary_path" "${TARGET_USER}@${TARGET_HOST}:${TARGET_APP_PATH}/" || {
     echo "APP 传输失败。"
     exit 1
 }
 
 scp -O -P "$TARGET_PORT" "$SCRIPT_DIR/smartcar_config.toml" "${TARGET_USER}@${TARGET_HOST}:${TARGET_CONFIG_PATH}" || {
     echo "配置文件传输失败。"
+    exit 1
+}
+
+if [ ! -d "$ncnn_model_dir" ]; then
+    echo "找不到 ncnn 模型目录: $ncnn_model_dir"
+    exit 1
+fi
+
+ssh -p "$TARGET_PORT" "${TARGET_USER}@${TARGET_HOST}" "mkdir -p '${TARGET_APP_PATH}/ncnn_model'" || {
+    echo "创建目标 ncnn_model 目录失败。"
+    exit 1
+}
+
+scp -O -P "$TARGET_PORT" \
+    "$ncnn_model_dir/tiny_classifier_fp32.ncnn.param" \
+    "$ncnn_model_dir/tiny_classifier_fp32.ncnn.bin" \
+    "$ncnn_model_dir/labels.txt" \
+    "${TARGET_USER}@${TARGET_HOST}:${TARGET_APP_PATH}/ncnn_model/" || {
+    echo "ncnn 模型文件传输失败。"
+    exit 1
+}
+
+if [ ! -d "$image_dir" ]; then
+    echo "找不到离线推理图片目录: $image_dir"
+    exit 1
+fi
+
+ssh -p "$TARGET_PORT" "${TARGET_USER}@${TARGET_HOST}" "mkdir -p '${TARGET_APP_PATH}/image'" || {
+    echo "创建目标 image 目录失败。"
+    exit 1
+}
+
+scp -O -P "$TARGET_PORT" "$image_dir"/* "${TARGET_USER}@${TARGET_HOST}:${TARGET_APP_PATH}/image/" || {
+    echo "离线推理图片传输失败。"
     exit 1
 }
 

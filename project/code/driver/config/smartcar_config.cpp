@@ -248,6 +248,25 @@ bool parse_size_t_value(const std::string &raw, size_t *value)
     }
 }
 
+bool parse_float_value(const std::string &raw, float *value)
+{
+    try
+    {
+        size_t consumed = 0;
+        const float parsed = std::stof(raw, &consumed);
+        if (consumed != raw.size())
+        {
+            return false;
+        }
+        *value = parsed;
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
 bool parse_string_value(const std::string &raw, std::string *value)
 {
     if (raw.size() < 2 || raw.front() != '"' || raw.back() != '"')
@@ -392,6 +411,25 @@ bool require_size_t(const RawMap &values,
     return true;
 }
 
+bool require_float(const RawMap &values,
+                   std::set<std::string> *consumed,
+                   const std::string &key,
+                   float *target,
+                   std::string *error_message)
+{
+    std::string raw;
+    if (!take_raw(values, consumed, key, &raw, error_message))
+    {
+        return false;
+    }
+    if (!parse_float_value(raw, target))
+    {
+        *error_message = "invalid float for key: " + key;
+        return false;
+    }
+    return true;
+}
+
 bool require_string(const RawMap &values,
                     std::set<std::string> *consumed,
                     const std::string &key,
@@ -494,6 +532,10 @@ void collect_restart_required_keys(const ConfigSnapshot &old_config,
         }
     };
 
+    push_if(old_config.vision_runtime.offline_image_infer_mode != g_vision_runtime_config.offline_image_infer_mode,
+            "vision.runtime.offline_image_infer_mode");
+    push_if(old_config.vision_runtime.offline_image_accuracy_report_mode != g_vision_runtime_config.offline_image_accuracy_report_mode,
+            "vision.runtime.offline_image_accuracy_report_mode");
     push_if(old_config.vision_runtime.ncnn_input_width != g_vision_runtime_config.ncnn_input_width,
             "vision.runtime.ncnn.input_width");
     push_if(old_config.vision_runtime.ncnn_input_height != g_vision_runtime_config.ncnn_input_height,
@@ -552,7 +594,9 @@ bool apply_values(const RawMap &values, std::string *error_message)
     int udp_web_meta_port = 0;
     size_t ncnn_label_count = 0;
 
-    if (!require_bool(values, &consumed, "vision.runtime.infer_enabled", &g_vision_runtime_config.infer_enabled, error_message) ||
+    if (!require_bool(values, &consumed, "vision.runtime.offline_image_infer_mode", &g_vision_runtime_config.offline_image_infer_mode, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.offline_image_accuracy_report_mode", &g_vision_runtime_config.offline_image_accuracy_report_mode, error_message) ||
+        !require_bool(values, &consumed, "vision.runtime.infer_enabled", &g_vision_runtime_config.infer_enabled, error_message) ||
         !require_bool(values, &consumed, "vision.runtime.ncnn_enabled", &g_vision_runtime_config.ncnn_enabled, error_message) ||
         !require_int(values, &consumed, "vision.runtime.ncnn.input_width", &g_vision_runtime_config.ncnn_input_width, error_message) ||
         !require_int(values, &consumed, "vision.runtime.ncnn.input_height", &g_vision_runtime_config.ncnn_input_height, error_message) ||
@@ -577,7 +621,20 @@ bool apply_values(const RawMap &values, std::string *error_message)
         !require_bool(values, &consumed, "vision.runtime.web.tcp_enabled", &g_vision_runtime_config.udp_web_tcp_enabled, error_message) ||
         !require_string(values, &consumed, "vision.runtime.web.server_ip", &g_string_storage.udp_web_server_ip, &g_vision_runtime_config.udp_web_server_ip, error_message) ||
         !require_int(values, &consumed, "vision.runtime.web.video_port", &udp_web_video_port, error_message) ||
-        !require_int(values, &consumed, "vision.runtime.web.meta_port", &udp_web_meta_port, error_message))
+        !require_int(values, &consumed, "vision.runtime.web.meta_port", &udp_web_meta_port, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.search.x_min_permille", &g_vision_runtime_config.red_search_x_min_permille, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.search.x_max_permille", &g_vision_runtime_config.red_search_x_max_permille, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.search.y_min_permille", &g_vision_runtime_config.red_search_y_min_permille, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.search.y_max_permille", &g_vision_runtime_config.red_search_y_max_permille, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.roi.h_span", &g_vision_runtime_config.red_roi_h_span, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.roi.s_min", &g_vision_runtime_config.red_roi_s_min, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.roi.v_min", &g_vision_runtime_config.red_roi_v_min, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.roi.close_iter", &g_vision_runtime_config.red_roi_close_iter, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.roi.open_iter", &g_vision_runtime_config.red_roi_open_iter, error_message) ||
+        !require_int(values, &consumed, "vision.runtime.red_detect.roi.area_min", &g_vision_runtime_config.red_roi_area_min, error_message) ||
+        !require_float(values, &consumed, "vision.runtime.red_detect.roi.ratio_w", &g_vision_runtime_config.red_roi_ratio_w, error_message) ||
+        !require_float(values, &consumed, "vision.runtime.red_detect.roi.ratio_h", &g_vision_runtime_config.red_roi_ratio_h, error_message) ||
+        !require_float(values, &consumed, "vision.runtime.red_detect.roi.offset_ratio", &g_vision_runtime_config.red_roi_offset_ratio, error_message))
     {
         return false;
     }
@@ -585,10 +642,40 @@ bool apply_values(const RawMap &values, std::string *error_message)
     g_vision_runtime_config.udp_web_max_fps = static_cast<uint32>(std::max(udp_web_max_fps, 0));
     g_vision_runtime_config.udp_web_video_port = static_cast<uint16>(std::max(udp_web_video_port, 0));
     g_vision_runtime_config.udp_web_meta_port = static_cast<uint16>(std::max(udp_web_meta_port, 0));
+    g_vision_runtime_config.red_search_x_min_permille = std::clamp(g_vision_runtime_config.red_search_x_min_permille, 0, 1000);
+    g_vision_runtime_config.red_search_x_max_permille = std::clamp(g_vision_runtime_config.red_search_x_max_permille, 0, 1000);
+    g_vision_runtime_config.red_search_y_min_permille = std::clamp(g_vision_runtime_config.red_search_y_min_permille, 0, 1000);
+    g_vision_runtime_config.red_search_y_max_permille = std::clamp(g_vision_runtime_config.red_search_y_max_permille, 0, 1000);
+    g_vision_runtime_config.red_roi_h_span = std::clamp(g_vision_runtime_config.red_roi_h_span, 0, 90);
+    g_vision_runtime_config.red_roi_s_min = std::clamp(g_vision_runtime_config.red_roi_s_min, 0, 255);
+    g_vision_runtime_config.red_roi_v_min = std::clamp(g_vision_runtime_config.red_roi_v_min, 0, 255);
+    g_vision_runtime_config.red_roi_close_iter = std::max(g_vision_runtime_config.red_roi_close_iter, 0);
+    g_vision_runtime_config.red_roi_open_iter = std::max(g_vision_runtime_config.red_roi_open_iter, 0);
+    g_vision_runtime_config.red_roi_area_min = std::max(g_vision_runtime_config.red_roi_area_min, 1);
+    g_vision_runtime_config.red_roi_ratio_w = std::max(g_vision_runtime_config.red_roi_ratio_w, 0.01f);
+    g_vision_runtime_config.red_roi_ratio_h = std::max(g_vision_runtime_config.red_roi_ratio_h, 0.01f);
+    g_vision_runtime_config.red_roi_offset_ratio = std::max(g_vision_runtime_config.red_roi_offset_ratio, 0.0f);
+
+    if (g_vision_runtime_config.red_search_x_min_permille >= g_vision_runtime_config.red_search_x_max_permille)
+    {
+        *error_message = "vision.runtime.red_detect.search.x_min_permille must be < x_max_permille";
+        return false;
+    }
+    if (g_vision_runtime_config.red_search_y_min_permille >= g_vision_runtime_config.red_search_y_max_permille)
+    {
+        *error_message = "vision.runtime.red_detect.search.y_min_permille must be < y_max_permille";
+        return false;
+    }
 
     if (g_vision_runtime_config.ncnn_label_count > VISION_NCNN_CONFIG_MAX_LABELS)
     {
         *error_message = "vision.runtime.ncnn.label_count exceeds max";
+        return false;
+    }
+    if (g_vision_runtime_config.offline_image_accuracy_report_mode != 1 &&
+        g_vision_runtime_config.offline_image_accuracy_report_mode != 2)
+    {
+        *error_message = "vision.runtime.offline_image_accuracy_report_mode must be 1 or 2";
         return false;
     }
 

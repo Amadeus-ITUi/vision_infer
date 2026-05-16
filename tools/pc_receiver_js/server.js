@@ -30,7 +30,7 @@ const udpByteEvents = [];
 const udpFrameEvents = [];
 
 function modeName(mode) {
-  if (mode === 0) return 'binary';
+  if (mode === 0) return 'hsv_strip';
   if (mode === 1) return 'gray';
   if (mode === 2) return 'rgb';
   if (mode === 3) return 'roi64';
@@ -169,7 +169,7 @@ function buildTransportTelemetry(status) {
   const recentFrames = udpFrameEvents.filter((item) => item.ts >= oneSecAgo);
 
   const rxBytesPerSec = recentBytes.reduce((sum, item) => sum + item.bytes, 0);
-  const rxFramesByMode = { binary: 0, gray: 0, rgb: 0, roi64: 0 };
+  const rxFramesByMode = { hsv_strip: 0, gray: 0, rgb: 0, roi64: 0 };
   for (const item of recentFrames) {
     const key = modeName(item.mode);
     if (key in rxFramesByMode) {
@@ -181,7 +181,7 @@ function buildTransportTelemetry(status) {
     rx_udp_bytes_per_sec: rxBytesPerSec,
     rx_udp_frames_per_sec: recentFrames.length,
     rx_udp_gray_fps: rxFramesByMode.gray,
-    rx_udp_binary_fps: rxFramesByMode.binary,
+    rx_udp_hsv_strip_fps: rxFramesByMode.hsv_strip,
     rx_udp_rgb_fps: rxFramesByMode.rgb,
     rx_udp_roi64_fps: rxFramesByMode.roi64,
     board_video_host: status && status.board_video_host ? status.board_video_host : null
@@ -283,7 +283,7 @@ function startHttpServer() {
     if (pathname === '/api/frame_meta') {
       sendJson(res, 200, {
         gray: latestByMode[1],
-        binary: latestByMode[0],
+        hsv_strip: latestByMode[0],
         rgb: latestByMode[2],
         roi64: latestByMode[3]
       });
@@ -295,8 +295,8 @@ function startHttpServer() {
       return;
     }
 
-    if (pathname === '/api/frame_binary.jpg') {
-      writeImage(res, latestByMode[0], 'binary frame not ready');
+    if (pathname === '/api/frame_hsv_strip.png') {
+      writeImage(res, latestByMode[0], 'hsv strip frame not ready');
       return;
     }
 

@@ -16,6 +16,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -63,6 +64,7 @@ bool g_tcp_ready = false;
 char g_server_ip[64] = {0};
 uint16 g_video_port = 0;
 uint16 g_meta_port = 0;
+std::atomic<uint64> g_last_infer_console_log_us(0);
 
 uint64 now_us()
 {
@@ -155,14 +157,42 @@ bool fps_limited(std::atomic<uint64> &last_tick_us, uint32 max_fps)
     return false;
 }
 
-std::vector<uchar> encode_image(const cv::Mat &image, bool gray)
+std::vector<uchar> encode_image(const cv::Mat &image, bool gray, uint8 format = VISION_WEB_IMAGE_FORMAT_JPEG)
 {
     std::vector<uchar> encoded;
-    std::vector<int> params = {
-        cv::IMWRITE_JPEG_QUALITY, gray ? kGrayJpegQuality : kRgbJpegQuality
-    };
-    cv::imencode(".jpg", image, encoded, params);
+    std::vector<int> params;
+    const char *ext = ".jpg";
+    if (format == VISION_WEB_IMAGE_FORMAT_PNG)
+    {
+        ext = ".png";
+    }
+    else if (format == VISION_WEB_IMAGE_FORMAT_BMP)
+    {
+        ext = ".bmp";
+    }
+    else
+    {
+        params = {cv::IMWRITE_JPEG_QUALITY, gray ? kGrayJpegQuality : kRgbJpegQuality};
+    }
+    cv::imencode(ext, image, encoded, params);
     return encoded;
+}
+
+cv::Rect build_hsv_debug_strip_roi(int width, int height)
+{
+    if (width <= 0 || height <= 0)
+    {
+        return cv::Rect();
+    }
+    const int x_min_pm = std::clamp(g_vision_runtime_config.red_search_x_min_permille, 0, 1000);
+    const int x_max_pm = std::clamp(g_vision_runtime_config.red_search_x_max_permille, 0, 1000);
+    const int y_min_pm = std::clamp(g_vision_runtime_config.red_search_y_min_permille, 0, 1000);
+    const int y_max_pm = std::clamp(g_vision_runtime_config.red_search_y_max_permille, 0, 1000);
+    const int x0 = std::clamp((width * x_min_pm) / 1000, 0, std::max(0, width - 1));
+    const int x1 = std::clamp((width * x_max_pm) / 1000, x0 + 1, width);
+    const int y0 = std::clamp((height * y_min_pm) / 1000, 0, std::max(0, height - 1));
+    const int y1 = std::clamp((height * y_max_pm) / 1000, y0 + 1, height);
+    return cv::Rect(x0, y0, x1 - x0, y1 - y0) & cv::Rect(0, 0, width, height);
 }
 
 void udp_send_frame_payload(const std::vector<uchar> &encoded,
@@ -221,13 +251,60 @@ void udp_send_gray_rgb()
         }
     }
 
-    if (g_vision_runtime_config.udp_web_send_rgb_jpeg)
+    const uint8 *bgr = vision_image_processor_bgr_downsampled_image();
+    cv::Mat bgr_img;
+    if (bgr != nullptr)
     {
-        const uint8 *bgr = vision_image_processor_bgr_downsampled_image();
-        if (bgr != nullptr)
+        bgr_img = cv::Mat(VISION_DOWNSAMPLED_HEIGHT, VISION_DOWNSAMPLED_WIDTH, CV_8UC3, const_cast<uint8 *>(bgr));
+    }
+
+    if (g_vision_runtime_config.udp_web_send_rgb_jpeg && !bgr_img.empty())
+    {
+        udp_send_frame_payload(encode_image(bgr_img, false), bgr_img.cols, bgr_img.rows, 2, VISION_WEB_IMAGE_FORMAT_JPEG);
+        ++sent_count;
+    }
+
+    // HSV 调试条带独立发送，不依赖 RGB 图是否开启。
+    if (!bgr_img.empty())
+    {
+        const cv::Rect hsv_roi = build_hsv_debug_strip_roi(bgr_img.cols, bgr_img.rows);
+        if (hsv_roi.width > 0 && hsv_roi.height > 0)
         {
-            cv::Mat bgr_img(VISION_DOWNSAMPLED_HEIGHT, VISION_DOWNSAMPLED_WIDTH, CV_8UC3, const_cast<uint8 *>(bgr));
-            udp_send_frame_payload(encode_image(bgr_img, false), bgr_img.cols, bgr_img.rows, 2, VISION_WEB_IMAGE_FORMAT_JPEG);
+            cv::Mat roi_hsv;
+            cv::cvtColor(bgr_img(hsv_roi), roi_hsv, cv::COLOR_BGR2HSV);
+
+            const int h_span = std::clamp(g_vision_runtime_config.red_roi_h_span, 0, 90);
+            const int s_min = std::clamp(g_vision_runtime_config.red_roi_s_min, 0, 255);
+            const int v_min = std::clamp(g_vision_runtime_config.red_roi_v_min, 0, 255);
+            cv::Mat mask_low;
+            cv::Mat mask_high;
+            cv::inRange(roi_hsv, cv::Scalar(0, s_min, v_min), cv::Scalar(h_span, 255, 255), mask_low);
+            cv::inRange(roi_hsv, cv::Scalar(180 - h_span, s_min, v_min), cv::Scalar(180, 255, 255), mask_high);
+            cv::Mat red_mask;
+            cv::bitwise_or(mask_low, mask_high, red_mask);
+
+            const cv::Mat kernel = cv::Mat::ones(3, 3, CV_8U);
+            const int close_iter = std::max(0, g_vision_runtime_config.red_roi_close_iter);
+            const int open_iter = std::max(0, g_vision_runtime_config.red_roi_open_iter);
+            if (close_iter > 0)
+            {
+                cv::morphologyEx(red_mask, red_mask, cv::MORPH_CLOSE, kernel, cv::Point(-1, -1), close_iter);
+            }
+            if (open_iter > 0)
+            {
+                cv::morphologyEx(red_mask, red_mask, cv::MORPH_OPEN, kernel, cv::Point(-1, -1), open_iter);
+            }
+
+            // 与主板识别一致：仅保留命中红色阈值的 HSV 像素，其他置白。
+            cv::Mat hsv_debug(roi_hsv.size(), roi_hsv.type(), cv::Scalar(255, 255, 255));
+            roi_hsv.copyTo(hsv_debug, red_mask);
+
+            // HSV 数值直接编码到通道后发送（H/S/V 对应 B/G/R 映射，前端按该映射取值）。
+            udp_send_frame_payload(encode_image(hsv_debug, false, VISION_WEB_IMAGE_FORMAT_PNG),
+                                   static_cast<uint16>(hsv_debug.cols),
+                                   static_cast<uint16>(hsv_debug.rows),
+                                   0,
+                                   VISION_WEB_IMAGE_FORMAT_PNG);
             ++sent_count;
         }
     }
@@ -240,10 +317,8 @@ void udp_send_gray_rgb()
     vision_image_processor_get_ncnn_roi(&roi_valid, &roi_x, &roi_y, &roi_w, &roi_h);
     if (roi_valid && roi_w > 0 && roi_h > 0)
     {
-        const uint8 *bgr = vision_image_processor_bgr_downsampled_image();
-        if (bgr != nullptr)
+        if (!bgr_img.empty())
         {
-            cv::Mat bgr_img(VISION_DOWNSAMPLED_HEIGHT, VISION_DOWNSAMPLED_WIDTH, CV_8UC3, const_cast<uint8 *>(bgr));
             cv::Rect roi(roi_x, roi_y, roi_w, roi_h);
             roi &= cv::Rect(0, 0, bgr_img.cols, bgr_img.rows);
             if (roi.width > 0 && roi.height > 0)
@@ -308,6 +383,28 @@ void tcp_send_status()
     vision_infer_async_result_t infer_result{};
     const bool has_infer_result = vision_infer_async_fetch_latest(&infer_result);
     const double cpu_usage_percent = read_cpu_usage_percent();
+    uint32 red_detect_us = 0;
+    vision_image_processor_get_last_red_detect_us(&red_detect_us);
+    if (has_infer_result && infer_result.red_detect_us > 0)
+    {
+        red_detect_us = infer_result.red_detect_us;
+    }
+
+    if (has_infer_result && infer_result.ncnn_infer_valid)
+    {
+        const uint64 now = now_us();
+        const uint64 last_log = g_last_infer_console_log_us.load();
+        if (last_log == 0 || now - last_log >= 3000000ULL)
+        {
+            g_last_infer_console_log_us.store(now);
+            printf("[INFER] result=%s score=%.4f cpu=%.2f%% red_detect=%.3fms infer=%.3fms\r\n",
+                   infer_result.ncnn_top_label,
+                   static_cast<double>(infer_result.ncnn_top_score),
+                   cpu_usage_percent,
+                   static_cast<double>(red_detect_us) / 1000.0,
+                   static_cast<double>(infer_result.ncnn_infer_us) / 1000.0);
+        }
+    }
 
     char line[4096];
     std::snprintf(line,
@@ -319,6 +416,7 @@ void tcp_send_status()
                   "\"infer_thread_fps\":%u,"
                   "\"udp_tx_fps\":%u,"
                   "\"cpu_usage_percent\":%.2f,"
+                  "\"red_detect_us\":%u,"
                   "\"capture_wait_us\":%u,"
                   "\"preprocess_us\":%u,"
                   "\"total_us\":%u,"
@@ -343,6 +441,7 @@ void tcp_send_status()
                   static_cast<unsigned int>(vision_infer_async_fps()),
                   static_cast<unsigned int>(g_udp_tx_fps.load()),
                   cpu_usage_percent,
+                  static_cast<unsigned int>(red_detect_us),
                   static_cast<unsigned int>(capture_wait_us),
                   static_cast<unsigned int>(preprocess_us),
                   static_cast<unsigned int>(total_us),
@@ -378,6 +477,7 @@ void vision_transport_init()
 {
     g_last_send_time_us.store(0);
     g_udp_tx_fps.store(0);
+    g_last_infer_console_log_us.store(0);
 }
 
 void vision_transport_send_step()
