@@ -55,6 +55,32 @@
 #error "Invalid UVC_FPS_PRESET. Use 60/90/120/180 presets."
 #endif
 
+// UVC输出格式配置（构建时由 UVC_FORMAT_PRESET 选择）：
+// 0 -> YUY2
+// 1 -> MJPG
+#define UVC_FORMAT_PRESET_YUY2 0
+#define UVC_FORMAT_PRESET_MJPG 1
+
+#ifndef UVC_FORMAT_PRESET
+#define UVC_FORMAT_PRESET UVC_FORMAT_PRESET_MJPG
+#endif
+
+#if (UVC_FORMAT_PRESET == UVC_FORMAT_PRESET_YUY2)
+#define UVC_FOURCC_CHAR_0 'Y'
+#define UVC_FOURCC_CHAR_1 'U'
+#define UVC_FOURCC_CHAR_2 'Y'
+#define UVC_FOURCC_CHAR_3 '2'
+#define UVC_FORMAT_NAME "YUY2"
+#elif (UVC_FORMAT_PRESET == UVC_FORMAT_PRESET_MJPG)
+#define UVC_FOURCC_CHAR_0 'M'
+#define UVC_FOURCC_CHAR_1 'J'
+#define UVC_FOURCC_CHAR_2 'P'
+#define UVC_FOURCC_CHAR_3 'G'
+#define UVC_FORMAT_NAME "MJPG"
+#else
+#error "Invalid UVC_FORMAT_PRESET. Use 0=YUY2 or 1=MJPG."
+#endif
+
 int8 uvc_camera_init(const char *path);
 int8 wait_image_refresh();
 

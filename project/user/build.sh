@@ -19,6 +19,7 @@ TARGET_CONFIG_PATH="/home/root/infer/smartcar_config.toml"
 MAKE_JOBS="12"
 CAMERA_CAPTURE_WIDTH="320"
 CAMERA_CAPTURE_FPS="120"
+CAMERA_CAPTURE_FORMAT="mjpg"
 
 print_usage() {
     cat <<EOF
@@ -35,6 +36,8 @@ print_usage() {
     ./build.sh --camera-fps 90
     ./build.sh --camera-fps 120
     ./build.sh --camera-fps 180
+    ./build.sh --camera-format mjpg
+    ./build.sh --camera-format yuy2
     ./build.sh --jobs 16
 
 说明:
@@ -51,6 +54,7 @@ print_usage() {
      config_path=$TARGET_CONFIG_PATH
      camera_width=$CAMERA_CAPTURE_WIDTH
      camera_fps=$CAMERA_CAPTURE_FPS
+     camera_format=$CAMERA_CAPTURE_FORMAT
 EOF
 }
 
@@ -144,6 +148,10 @@ while [ $# -gt 0 ]; do
             CAMERA_CAPTURE_FPS="$2"
             shift 2
             ;;
+        --camera-format)
+            CAMERA_CAPTURE_FORMAT="$2"
+            shift 2
+            ;;
         -h|--help)
             print_usage
             exit 0
@@ -168,6 +176,11 @@ fi
 
 if [ "$CAMERA_CAPTURE_FPS" != "60" ] && [ "$CAMERA_CAPTURE_FPS" != "90" ] && [ "$CAMERA_CAPTURE_FPS" != "120" ] && [ "$CAMERA_CAPTURE_FPS" != "180" ]; then
     echo "CAMERA_CAPTURE_FPS 仅支持 60 / 90 / 120 / 180，当前: $CAMERA_CAPTURE_FPS"
+    exit 1
+fi
+
+if [ "$CAMERA_CAPTURE_FORMAT" != "mjpg" ] && [ "$CAMERA_CAPTURE_FORMAT" != "yuy2" ]; then
+    echo "CAMERA_CAPTURE_FORMAT 仅支持 mjpg / yuy2，当前: $CAMERA_CAPTURE_FORMAT"
     exit 1
 fi
 
@@ -198,12 +211,18 @@ elif [ "$CAMERA_CAPTURE_FPS" = "180" ]; then
     UVC_FPS_PRESET="3"
 fi
 
+UVC_FORMAT_PRESET="1"
+if [ "$CAMERA_CAPTURE_FORMAT" = "yuy2" ]; then
+    UVC_FORMAT_PRESET="0"
+fi
+
 echo "[BUILD] 目标预设: ${TARGET_PRESET}"
 echo "[BUILD] 目标主板: ${TARGET_USER}@${TARGET_HOST}:${TARGET_PORT}"
 echo "[BUILD] APP 目标路径: ${TARGET_APP_PATH}"
 echo "[BUILD] 配置目标路径: ${TARGET_CONFIG_PATH}"
 echo "[BUILD] 摄像头采图宽度: ${CAMERA_CAPTURE_WIDTH} (UVC_RES_PRESET=${UVC_RES_PRESET})"
 echo "[BUILD] 摄像头采图帧率: ${CAMERA_CAPTURE_FPS} (UVC_FPS_PRESET=${UVC_FPS_PRESET})"
+echo "[BUILD] 摄像头输出格式: ${CAMERA_CAPTURE_FORMAT} (UVC_FORMAT_PRESET=${UVC_FORMAT_PRESET})"
 
 node "$SYNC_TOML_SCRIPT" "$CONNECTION_PRESETS_FILE" "$TARGET_PRESET" "$SCRIPT_DIR/smartcar_config.toml" || {
     echo "同步 smartcar_config.toml 中的电脑接收端 IP 失败。"
@@ -220,7 +239,7 @@ find . -mindepth 1 ! -name "本文件夹作用.txt" -exec rm -rf {} + || {
     exit 1
 }
 
-cmake "$SCRIPT_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DUVC_RES_PRESET="${UVC_RES_PRESET}" -DUVC_FPS_PRESET="${UVC_FPS_PRESET}" || {
+cmake "$SCRIPT_DIR" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DUVC_RES_PRESET="${UVC_RES_PRESET}" -DUVC_FPS_PRESET="${UVC_FPS_PRESET}" -DUVC_FORMAT_PRESET="${UVC_FORMAT_PRESET}" || {
     echo "cmake 命令执行失败。"
     exit 1
 }

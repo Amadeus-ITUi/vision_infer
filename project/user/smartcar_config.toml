@@ -25,7 +25,7 @@ offline_image_accuracy_report_mode = 1
 # "camera_capture_only"：仅摄像头采图；不做灰度/HSV/红框/ROI/ncnn。
 # "camera_red_roi"：摄像头采图 + 红框识别 + ROI 绘制。
 # "camera_red_roi_ncnn"：摄像头采图 + 红框识别 + ROI 绘制 + ncnn 推理。
-camera_mode = "camera_capture_only"
+camera_mode = "camera_red_roi_ncnn"
 
 [vision.runtime.ncnn]
 # ncnn 模型输入宽度。
@@ -71,7 +71,7 @@ offset_ratio = 0.0
 
 [vision.runtime.web]
 # 是否开启网页图像发送。
-enabled = false
+enabled = true
 
 # 网页图像发送最大帧率。
 # 0 表示不限速；数值越大，占用带宽越高。
@@ -79,7 +79,7 @@ max_fps = 30
 
 # 是否发送灰度图。
 # 现在默认关闭，因为当前网页主看彩图和 ROI。
-send_gray_jpeg = false
+send_gray_jpeg = true
 
 # 灰度图编码格式。
 # 0=JPEG, 1=PNG, 2=BMP。
@@ -98,7 +98,7 @@ data_profile = 0
 
 # 是否开启 TCP 状态发送。
 # true 时网页能收到红框、ROI、推理结果和耗时信息。
-tcp_enabled = false
+tcp_enabled = true
 
 # 电脑端接收网页服务的 IP。
 server_ip = "172.21.79.129"
