@@ -302,6 +302,31 @@ bool parse_string_value(const std::string &raw, std::string *value)
     return !escaped;
 }
 
+bool parse_camera_mode_value(const std::string &raw, int *mode)
+{
+    std::string parsed;
+    if (!parse_string_value(raw, &parsed))
+    {
+        return false;
+    }
+    if (parsed == "camera_capture_only")
+    {
+        *mode = VISION_CAMERA_MODE_CAPTURE_ONLY;
+        return true;
+    }
+    if (parsed == "camera_red_roi")
+    {
+        *mode = VISION_CAMERA_MODE_RED_ROI;
+        return true;
+    }
+    if (parsed == "camera_red_roi_ncnn")
+    {
+        *mode = VISION_CAMERA_MODE_RED_ROI_NCNN;
+        return true;
+    }
+    return false;
+}
+
 bool split_array_items(const std::string &raw, std::vector<std::string> *items)
 {
     if (raw.size() < 2 || raw.front() != '[' || raw.back() != ']')
@@ -451,6 +476,51 @@ bool require_string(const RawMap &values,
     return true;
 }
 
+bool require_camera_mode(const RawMap &values,
+                         std::set<std::string> *consumed,
+                         const std::string &key,
+                         int *target,
+                         std::string *error_message)
+{
+    std::string raw;
+    if (!take_raw(values, consumed, key, &raw, error_message))
+    {
+        return false;
+    }
+    if (!parse_camera_mode_value(raw, target))
+    {
+        *error_message = "invalid camera mode for key: " + key;
+        return false;
+    }
+    return true;
+}
+
+void consume_legacy_runtime_bool_key(const RawMap &values,
+                                     std::set<std::string> *consumed,
+                                     const std::string &key)
+{
+    const auto it = values.find(key);
+    if (it != values.end())
+    {
+        consumed->insert(key);
+    }
+}
+
+void derive_runtime_mode_flags()
+{
+    g_vision_runtime_config.capture_enabled = !g_vision_runtime_config.offline_image_infer_mode;
+    g_vision_runtime_config.red_detect_enabled =
+        (g_vision_runtime_config.camera_mode != VISION_CAMERA_MODE_CAPTURE_ONLY);
+    g_vision_runtime_config.roi_draw_enabled =
+        (g_vision_runtime_config.camera_mode != VISION_CAMERA_MODE_CAPTURE_ONLY);
+    g_vision_runtime_config.infer_enabled = g_vision_runtime_config.red_detect_enabled;
+    g_vision_runtime_config.ncnn_enabled =
+        (g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_RED_ROI_NCNN);
+    g_vision_runtime_config.hsv_debug_enabled =
+        (g_vision_runtime_config.udp_web_enabled &&
+         g_vision_runtime_config.camera_mode != VISION_CAMERA_MODE_CAPTURE_ONLY);
+}
+
 bool require_string_array(const RawMap &values,
                           std::set<std::string> *consumed,
                           const std::string &key,
@@ -536,6 +606,8 @@ void collect_restart_required_keys(const ConfigSnapshot &old_config,
             "vision.runtime.offline_image_infer_mode");
     push_if(old_config.vision_runtime.offline_image_accuracy_report_mode != g_vision_runtime_config.offline_image_accuracy_report_mode,
             "vision.runtime.offline_image_accuracy_report_mode");
+    push_if(old_config.vision_runtime.camera_mode != g_vision_runtime_config.camera_mode,
+            "vision.runtime.camera_mode");
     push_if(old_config.vision_runtime.ncnn_input_width != g_vision_runtime_config.ncnn_input_width,
             "vision.runtime.ncnn.input_width");
     push_if(old_config.vision_runtime.ncnn_input_height != g_vision_runtime_config.ncnn_input_height,
@@ -566,7 +638,8 @@ void apply_runtime_changes_after_commit()
 {
     vision_transport_udp_set_enabled(g_vision_runtime_config.udp_web_enabled);
     vision_transport_udp_set_max_fps(g_vision_runtime_config.udp_web_max_fps);
-    vision_transport_udp_set_tcp_enabled(g_vision_runtime_config.udp_web_tcp_enabled);
+    vision_transport_udp_set_tcp_enabled(g_vision_runtime_config.udp_web_enabled &&
+                                         g_vision_runtime_config.udp_web_tcp_enabled);
 
     vision_thread_set_infer_enabled(g_vision_runtime_config.infer_enabled);
     vision_thread_set_ncnn_enabled(g_vision_runtime_config.ncnn_enabled);
@@ -596,8 +669,7 @@ bool apply_values(const RawMap &values, std::string *error_message)
 
     if (!require_bool(values, &consumed, "vision.runtime.offline_image_infer_mode", &g_vision_runtime_config.offline_image_infer_mode, error_message) ||
         !require_int(values, &consumed, "vision.runtime.offline_image_accuracy_report_mode", &g_vision_runtime_config.offline_image_accuracy_report_mode, error_message) ||
-        !require_bool(values, &consumed, "vision.runtime.infer_enabled", &g_vision_runtime_config.infer_enabled, error_message) ||
-        !require_bool(values, &consumed, "vision.runtime.ncnn_enabled", &g_vision_runtime_config.ncnn_enabled, error_message) ||
+        !require_camera_mode(values, &consumed, "vision.runtime.camera_mode", &g_vision_runtime_config.camera_mode, error_message) ||
         !require_int(values, &consumed, "vision.runtime.ncnn.input_width", &g_vision_runtime_config.ncnn_input_width, error_message) ||
         !require_int(values, &consumed, "vision.runtime.ncnn.input_height", &g_vision_runtime_config.ncnn_input_height, error_message) ||
         !require_size_t(values, &consumed, "vision.runtime.ncnn.label_count", &ncnn_label_count, error_message) ||
@@ -605,6 +677,9 @@ bool apply_values(const RawMap &values, std::string *error_message)
     {
         return false;
     }
+
+    consume_legacy_runtime_bool_key(values, &consumed, "vision.runtime.infer_enabled");
+    consume_legacy_runtime_bool_key(values, &consumed, "vision.runtime.ncnn_enabled");
 
     if (ncnn_label_count != g_vision_runtime_config.ncnn_label_count)
     {
@@ -655,6 +730,15 @@ bool apply_values(const RawMap &values, std::string *error_message)
     g_vision_runtime_config.red_roi_ratio_w = std::max(g_vision_runtime_config.red_roi_ratio_w, 0.01f);
     g_vision_runtime_config.red_roi_ratio_h = std::max(g_vision_runtime_config.red_roi_ratio_h, 0.01f);
     g_vision_runtime_config.red_roi_offset_ratio = std::max(g_vision_runtime_config.red_roi_offset_ratio, 0.0f);
+
+    if (g_vision_runtime_config.camera_mode < VISION_CAMERA_MODE_CAPTURE_ONLY ||
+        g_vision_runtime_config.camera_mode > VISION_CAMERA_MODE_RED_ROI_NCNN)
+    {
+        *error_message = "vision.runtime.camera_mode is out of range";
+        return false;
+    }
+
+    derive_runtime_mode_flags();
 
     if (g_vision_runtime_config.red_search_x_min_permille >= g_vision_runtime_config.red_search_x_max_permille)
     {

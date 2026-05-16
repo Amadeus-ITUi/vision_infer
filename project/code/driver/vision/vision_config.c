@@ -3,8 +3,13 @@
 vision_runtime_config_t g_vision_runtime_config = {
     .offline_image_infer_mode = false,
     .offline_image_accuracy_report_mode = 1,
+    .camera_mode = VISION_CAMERA_MODE_RED_ROI_NCNN,
+    .capture_enabled = true,
+    .red_detect_enabled = true,
+    .roi_draw_enabled = true,
     .infer_enabled = true,
     .ncnn_enabled = true,
+    .hsv_debug_enabled = true,
 
     .ncnn_input_width = 64,
     .ncnn_input_height = 64,

@@ -1,5 +1,6 @@
 #include "driver/vision/vision_pipeline.h"
 
+#include "driver/vision/vision_config.h"
 #include "driver/vision/vision_image_processor.h"
 #include "driver/vision/vision_infer_async.h"
 
@@ -33,6 +34,11 @@ void apply_infer_result_to_image(const vision_infer_async_result_t &result)
                                         result.ncnn_roi_y,
                                         result.ncnn_roi_w,
                                         result.ncnn_roi_h);
+
+    if (!g_vision_runtime_config.roi_draw_enabled)
+    {
+        return;
+    }
 
     const uint8 *bgr_proc_data = vision_image_processor_bgr_image();
     if (bgr_proc_data == nullptr)

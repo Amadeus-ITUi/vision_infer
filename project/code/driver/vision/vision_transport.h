@@ -19,6 +19,7 @@ void vision_transport_send_step();
 // 如何修改：仅用于观测，不建议业务逻辑依赖其绝对值。
 // 是否调用：是，vision_thread 性能统计路径调用。
 uint32 vision_transport_get_last_send_time_us();
+uint32 vision_transport_get_udp_tx_fps();
 
 // 作用：初始化 UDP 视频 + TCP 状态上传通道。
 // 意义：统一网页端调试链路入口。
@@ -55,5 +56,6 @@ uint32 vision_transport_udp_get_max_fps();
 // 是否调用：是，main.cpp 配置下发。
 void vision_transport_udp_set_tcp_enabled(bool enabled);
 bool vision_transport_udp_tcp_enabled();
+double vision_transport_read_console_cpu_usage_percent();
 
 #endif

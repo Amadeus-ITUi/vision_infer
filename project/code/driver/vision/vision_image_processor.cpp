@@ -1,5 +1,6 @@
 #include "driver/vision/vision_image_processor.h"
 
+#include "driver/vision/vision_config.h"
 #include "driver/vision/vision_frame_capture.h"
 
 #include <opencv2/opencv.hpp>
@@ -77,11 +78,14 @@ bool vision_image_processor_process_step()
     }
 
     const auto t_pre_begin = std::chrono::steady_clock::now();
-    std::memcpy(g_bgr_proc.data(), g_bgr_full.data(), g_bgr_proc.size());
-    cv::Mat proc(kProcHeight, kProcWidth, CV_8UC3, g_bgr_proc.data());
+    if (g_vision_runtime_config.camera_mode != VISION_CAMERA_MODE_CAPTURE_ONLY)
+    {
+        std::memcpy(g_bgr_proc.data(), g_bgr_full.data(), g_bgr_proc.size());
+        cv::Mat proc(kProcHeight, kProcWidth, CV_8UC3, g_bgr_proc.data());
 
-    cv::Mat gray(kProcHeight, kProcWidth, CV_8UC1, g_gray_proc.data());
-    cv::cvtColor(proc, gray, cv::COLOR_BGR2GRAY);
+        cv::Mat gray(kProcHeight, kProcWidth, CV_8UC1, g_gray_proc.data());
+        cv::cvtColor(proc, gray, cv::COLOR_BGR2GRAY);
+    }
     const auto t_pre_end = std::chrono::steady_clock::now();
 
     g_last_capture_wait_us.store(capture_wait_us);
@@ -106,11 +110,19 @@ void vision_image_processor_reload_config_from_globals()
 
 const uint8 *vision_image_processor_gray_image()
 {
+    if (g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_CAPTURE_ONLY)
+    {
+        return nullptr;
+    }
     return g_gray_proc.data();
 }
 
 const uint8 *vision_image_processor_bgr_image()
 {
+    if (g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_CAPTURE_ONLY)
+    {
+        return g_bgr_full.data();
+    }
     return g_bgr_proc.data();
 }
 
@@ -121,11 +133,19 @@ const uint8 *vision_image_processor_bgr_full_image()
 
 const uint8 *vision_image_processor_gray_downsampled_image()
 {
+    if (g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_CAPTURE_ONLY)
+    {
+        return nullptr;
+    }
     return g_gray_proc.data();
 }
 
 const uint8 *vision_image_processor_bgr_downsampled_image()
 {
+    if (g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_CAPTURE_ONLY)
+    {
+        return g_bgr_full.data();
+    }
     return g_bgr_proc.data();
 }
 

@@ -4,6 +4,7 @@
 #include "vision_thread.h"
 #include "driver/config/smartcar_config.h"
 #include "driver/vision/vision_config.h"
+#include "driver/vision/vision_frame_capture.h"
 #include "driver/vision/vision_infer_async.h"
 #include "driver/vision/vision_transport.h"
 #include "driver/vision/vision_image_processor.h"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <dirent.h>
@@ -34,6 +36,18 @@ constexpr size_t kOfflineCpuSampleStartIndex = 4; // 0-based, the 5th image
 constexpr size_t kOfflineCpuTailDropCount = 5;
 constexpr useconds_t kBaselineCpuSettleUs = 1000000;
 constexpr useconds_t kBaselineCpuSampleWindowUs = 1000000;
+constexpr uint64_t kCameraRuntimeConsoleLogIntervalUs = 3000000ULL;
+
+const char *camera_mode_name(int mode)
+{
+    switch (mode)
+    {
+        case VISION_CAMERA_MODE_CAPTURE_ONLY: return "camera_capture_only";
+        case VISION_CAMERA_MODE_RED_ROI: return "camera_red_roi";
+        case VISION_CAMERA_MODE_RED_ROI_NCNN: return "camera_red_roi_ncnn";
+        default: return "camera_unknown";
+    }
+}
 
 struct CpuStatSample
 {
@@ -464,12 +478,19 @@ int main(int, char **)
     vision_image_processor_reload_config_from_globals();
     printf("[CONFIG] loaded=%s\r\n", loaded_config_path.c_str());
 
+    const bool need_ncnn =
+        g_vision_runtime_config.offline_image_infer_mode ||
+        g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_RED_ROI_NCNN;
     LQ_NCNN ncnn;
-    const bool ncnn_ready = vision_infer_init_default_model(ncnn);
-    if (!ncnn_ready)
+    bool ncnn_ready = false;
+    if (need_ncnn)
     {
-        cleanup_once();
-        return -1;
+        ncnn_ready = vision_infer_init_default_model(ncnn);
+        if (!ncnn_ready)
+        {
+            cleanup_once();
+            return -1;
+        }
     }
 
     if (g_vision_runtime_config.offline_image_infer_mode)
@@ -479,17 +500,21 @@ int main(int, char **)
         return ret;
     }
 
-    if (!vision_transport_udp_init(g_vision_runtime_config.udp_web_server_ip,
-                                   g_vision_runtime_config.udp_web_video_port,
-                                   g_vision_runtime_config.udp_web_meta_port))
+    if (g_vision_runtime_config.udp_web_enabled)
     {
-        printf("[UDP_WEB] init failed\r\n");
+        if (!vision_transport_udp_init(g_vision_runtime_config.udp_web_server_ip,
+                                       g_vision_runtime_config.udp_web_video_port,
+                                       g_vision_runtime_config.udp_web_meta_port))
+        {
+            printf("[UDP_WEB] init failed\r\n");
+        }
     }
     vision_transport_udp_set_enabled(g_vision_runtime_config.udp_web_enabled);
     vision_transport_udp_set_max_fps(g_vision_runtime_config.udp_web_max_fps);
-    vision_transport_udp_set_tcp_enabled(g_vision_runtime_config.udp_web_tcp_enabled);
+    vision_transport_udp_set_tcp_enabled(g_vision_runtime_config.udp_web_enabled &&
+                                         g_vision_runtime_config.udp_web_tcp_enabled);
 
-    if (!vision_thread_init("/dev/video0", &ncnn, ncnn_ready))
+    if (!vision_thread_init("/dev/video0", need_ncnn ? &ncnn : nullptr, ncnn_ready))
     {
         cleanup();
         return -1;
@@ -504,7 +529,13 @@ int main(int, char **)
         return -1;
     }
 
-    printf("[VISION] minimal pipeline: bgr -> red_rect -> roi -> ncnn -> web\r\n");
+    printf("[VISION] camera_mode=%s offline=%d web=%d red=%d roi=%d ncnn=%d\r\n",
+           camera_mode_name(g_vision_runtime_config.camera_mode),
+           g_vision_runtime_config.offline_image_infer_mode ? 1 : 0,
+           g_vision_runtime_config.udp_web_enabled ? 1 : 0,
+           g_vision_runtime_config.red_detect_enabled ? 1 : 0,
+           g_vision_runtime_config.roi_draw_enabled ? 1 : 0,
+           g_vision_runtime_config.ncnn_enabled ? 1 : 0);
     printf("[UDP_WEB] enabled=%d server=%s video=%u meta=%u fps=%u gray=%d rgb=%d\r\n",
            vision_transport_udp_is_enabled() ? 1 : 0,
            g_vision_runtime_config.udp_web_server_ip,
@@ -514,8 +545,25 @@ int main(int, char **)
            g_vision_runtime_config.udp_web_send_gray_jpeg ? 1 : 0,
            g_vision_runtime_config.udp_web_send_rgb_jpeg ? 1 : 0);
 
+    (void)vision_transport_read_console_cpu_usage_percent();
+    auto last_runtime_log = std::chrono::steady_clock::now();
     while (!g_should_exit)
     {
+        const auto now = std::chrono::steady_clock::now();
+        const uint64_t elapsed_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - last_runtime_log).count());
+        if (elapsed_us >= kCameraRuntimeConsoleLogIntervalUs)
+        {
+            last_runtime_log = now;
+            const double cpu_usage_percent = vision_transport_read_console_cpu_usage_percent();
+            printf("[CAMERA_RUNTIME] mode=%s cpu=%6.2f%% capture_fps=%u process_fps=%u udp_tx_fps=%u infer_fps=%u\r\n",
+                   camera_mode_name(g_vision_runtime_config.camera_mode),
+                   cpu_usage_percent,
+                   static_cast<unsigned int>(vision_frame_capture_fps()),
+                   static_cast<unsigned int>(vision_thread_process_fps()),
+                   static_cast<unsigned int>(vision_transport_get_udp_tx_fps()),
+                   static_cast<unsigned int>(vision_infer_async_fps()));
+        }
         system_delay_ms(kMainLoopPeriodMs);
     }
 

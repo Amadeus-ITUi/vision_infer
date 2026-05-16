@@ -49,6 +49,14 @@ struct udp_chunk_header_t
 };
 #pragma pack(pop)
 
+struct cpu_usage_state_t
+{
+    uint64 prev_total = 0;
+    uint64 prev_idle = 0;
+    bool has_prev = false;
+    std::mutex mutex;
+};
+
 std::atomic<uint32> g_last_send_time_us(0);
 
 std::atomic<bool> g_udp_enabled(false);
@@ -65,6 +73,8 @@ char g_server_ip[64] = {0};
 uint16 g_video_port = 0;
 uint16 g_meta_port = 0;
 std::atomic<uint64> g_last_infer_console_log_us(0);
+cpu_usage_state_t g_status_cpu_state;
+cpu_usage_state_t g_console_cpu_state;
 
 uint64 now_us()
 {
@@ -73,12 +83,12 @@ uint64 now_us()
             std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
-double read_cpu_usage_percent()
+double read_cpu_usage_percent(cpu_usage_state_t *state)
 {
-    static std::mutex cpu_mutex;
-    static uint64 prev_total = 0;
-    static uint64 prev_idle = 0;
-    static bool has_prev = false;
+    if (state == nullptr)
+    {
+        return 0.0;
+    }
 
     std::ifstream stat_file("/proc/stat");
     if (!stat_file.is_open())
@@ -104,19 +114,19 @@ double read_cpu_usage_percent()
     const uint64 total = user + nice + system + idle + iowait + irq + softirq + steal;
     const uint64 idle_total = idle + iowait;
 
-    std::lock_guard<std::mutex> lock(cpu_mutex);
-    if (!has_prev)
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (!state->has_prev)
     {
-        prev_total = total;
-        prev_idle = idle_total;
-        has_prev = true;
+        state->prev_total = total;
+        state->prev_idle = idle_total;
+        state->has_prev = true;
         return 0.0;
     }
 
-    const uint64 total_delta = total - prev_total;
-    const uint64 idle_delta = idle_total - prev_idle;
-    prev_total = total;
-    prev_idle = idle_total;
+    const uint64 total_delta = total - state->prev_total;
+    const uint64 idle_delta = idle_total - state->prev_idle;
+    state->prev_total = total;
+    state->prev_idle = idle_total;
     if (total_delta == 0)
     {
         return 0.0;
@@ -235,12 +245,14 @@ void udp_send_gray_rgb()
 {
     if (!g_udp_enabled.load() || fps_limited(g_udp_last_send_tick_us, g_udp_max_fps.load()))
     {
+        g_udp_tx_fps.store(0);
         return;
     }
 
     uint32 sent_count = 0;
 
-    if (g_vision_runtime_config.udp_web_send_gray_jpeg)
+    if (g_vision_runtime_config.udp_web_send_gray_jpeg &&
+        g_vision_runtime_config.camera_mode != VISION_CAMERA_MODE_CAPTURE_ONLY)
     {
         const uint8 *gray = vision_image_processor_gray_downsampled_image();
         if (gray != nullptr)
@@ -265,7 +277,7 @@ void udp_send_gray_rgb()
     }
 
     // HSV 调试条带独立发送，不依赖 RGB 图是否开启。
-    if (!bgr_img.empty())
+    if (g_vision_runtime_config.hsv_debug_enabled && !bgr_img.empty())
     {
         const cv::Rect hsv_roi = build_hsv_debug_strip_roi(bgr_img.cols, bgr_img.rows);
         if (hsv_roi.width > 0 && hsv_roi.height > 0)
@@ -314,8 +326,11 @@ void udp_send_gray_rgb()
     int roi_y = 0;
     int roi_w = 0;
     int roi_h = 0;
-    vision_image_processor_get_ncnn_roi(&roi_valid, &roi_x, &roi_y, &roi_w, &roi_h);
-    if (roi_valid && roi_w > 0 && roi_h > 0)
+    if (g_vision_runtime_config.roi_draw_enabled)
+    {
+        vision_image_processor_get_ncnn_roi(&roi_valid, &roi_x, &roi_y, &roi_w, &roi_h);
+    }
+    if (g_vision_runtime_config.roi_draw_enabled && roi_valid && roi_w > 0 && roi_h > 0)
     {
         if (!bgr_img.empty())
         {
@@ -331,10 +346,7 @@ void udp_send_gray_rgb()
         }
     }
 
-    if (sent_count > 0)
-    {
-        g_udp_tx_fps.store(sent_count);
-    }
+    g_udp_tx_fps.store(sent_count);
 }
 
 std::string json_escape(const std::string &value)
@@ -382,7 +394,7 @@ void tcp_send_status()
 
     vision_infer_async_result_t infer_result{};
     const bool has_infer_result = vision_infer_async_fetch_latest(&infer_result);
-    const double cpu_usage_percent = read_cpu_usage_percent();
+    const double cpu_usage_percent = read_cpu_usage_percent(&g_status_cpu_state);
     uint32 red_detect_us = 0;
     vision_image_processor_get_last_red_detect_us(&red_detect_us);
     if (has_infer_result && infer_result.red_detect_us > 0)
@@ -390,7 +402,7 @@ void tcp_send_status()
         red_detect_us = infer_result.red_detect_us;
     }
 
-    if (has_infer_result && infer_result.ncnn_infer_valid)
+    if (g_vision_runtime_config.ncnn_enabled && has_infer_result && infer_result.ncnn_infer_valid)
     {
         const uint64 now = now_us();
         const uint64 last_log = g_last_infer_console_log_us.load();
@@ -411,6 +423,7 @@ void tcp_send_status()
                   sizeof(line),
                   "{\"web_data_profile\":%d,"
                   "\"ts_ms\":%llu,"
+                  "\"camera_mode\":\"%s\","
                   "\"capture_thread_fps\":%u,"
                   "\"vision_process_fps\":%u,"
                   "\"infer_thread_fps\":%u,"
@@ -436,6 +449,8 @@ void tcp_send_status()
                   "\"roi64_size\":[%d,%d]}\n",
                   g_vision_runtime_config.udp_web_data_profile,
                   static_cast<unsigned long long>(now_us() / 1000ULL),
+                  g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_CAPTURE_ONLY ? "camera_capture_only" :
+                  (g_vision_runtime_config.camera_mode == VISION_CAMERA_MODE_RED_ROI ? "camera_red_roi" : "camera_red_roi_ncnn"),
                   static_cast<unsigned int>(vision_frame_capture_fps()),
                   static_cast<unsigned int>(vision_thread_process_fps()),
                   static_cast<unsigned int>(vision_infer_async_fps()),
@@ -478,10 +493,29 @@ void vision_transport_init()
     g_last_send_time_us.store(0);
     g_udp_tx_fps.store(0);
     g_last_infer_console_log_us.store(0);
+    {
+        std::lock_guard<std::mutex> lock(g_status_cpu_state.mutex);
+        g_status_cpu_state.prev_total = 0;
+        g_status_cpu_state.prev_idle = 0;
+        g_status_cpu_state.has_prev = false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_console_cpu_state.mutex);
+        g_console_cpu_state.prev_total = 0;
+        g_console_cpu_state.prev_idle = 0;
+        g_console_cpu_state.has_prev = false;
+    }
 }
 
 void vision_transport_send_step()
 {
+    if (!g_udp_enabled.load() && !g_tcp_enabled.load())
+    {
+        g_last_send_time_us.store(0);
+        g_udp_tx_fps.store(0);
+        return;
+    }
+
     const uint64 start_us = now_us();
     udp_send_gray_rgb();
     tcp_send_status();
@@ -491,6 +525,11 @@ void vision_transport_send_step()
 uint32 vision_transport_get_last_send_time_us()
 {
     return g_last_send_time_us.load();
+}
+
+uint32 vision_transport_get_udp_tx_fps()
+{
+    return g_udp_tx_fps.load();
 }
 
 bool vision_transport_udp_init(const char *server_ip, uint16 video_port, uint16 meta_port)
@@ -547,4 +586,9 @@ void vision_transport_udp_set_tcp_enabled(bool enabled)
 bool vision_transport_udp_tcp_enabled()
 {
     return g_tcp_enabled.load();
+}
+
+double vision_transport_read_console_cpu_usage_percent()
+{
+    return read_cpu_usage_percent(&g_console_cpu_state);
 }

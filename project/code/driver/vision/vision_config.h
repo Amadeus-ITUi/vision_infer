@@ -20,13 +20,25 @@ typedef enum
     VISION_WEB_IMAGE_FORMAT_BMP = 2
 } vision_web_image_format_enum;
 
+typedef enum
+{
+    VISION_CAMERA_MODE_CAPTURE_ONLY = 0,
+    VISION_CAMERA_MODE_RED_ROI = 1,
+    VISION_CAMERA_MODE_RED_ROI_NCNN = 2
+} vision_camera_mode_enum;
+
 typedef struct
 {
     // 推理运行控制。
     bool offline_image_infer_mode;
     int offline_image_accuracy_report_mode;
+    int camera_mode;
+    bool capture_enabled;
+    bool red_detect_enabled;
+    bool roi_draw_enabled;
     bool infer_enabled;
     bool ncnn_enabled;
+    bool hsv_debug_enabled;
 
     // ncnn 输入参数。
     int ncnn_input_width;
