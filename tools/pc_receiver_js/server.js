@@ -11,7 +11,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const BIND_HOST = process.env.BIND_HOST || '0.0.0.0';
 const UDP_PORT = Number(process.env.UDP_PORT || 10000);
 const TCP_PORT = Number(process.env.TCP_PORT || 10001);
-const HTTP_PORT = Number(process.env.HTTP_PORT || 8080);
+const HTTP_PORT = Number(process.env.HTTP_PORT || 9090);
 
 const WEB_IMAGE_FORMAT_JPEG = 0;
 const WEB_IMAGE_FORMAT_PNG = 1;

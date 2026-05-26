@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "mock:board": "node scripts/mock_board_sender.js"
   }
 }

@@ -46,8 +46,8 @@ labels = ["ambulance", "armored_car", "bomb", "gun", "medicine", "telescope"]
 [vision.runtime.red_detect.search]
 # 红框搜索区采用“画面中心线 + 底部 80%”语义。
 # x 方向默认覆盖全幅，y 方向只保留下 80%。
-x_min_permille = 0
-x_max_permille = 1000
+x_min_permille = 400
+x_max_permille = 600
 y_min_permille = 200
 y_max_permille = 1000
 
@@ -75,7 +75,7 @@ enabled = true
 
 # 网页图像发送最大帧率。
 # 0 表示不限速；数值越大，占用带宽越高。
-max_fps = 30
+max_fps = 10
 
 # 是否发送灰度图。
 # 现在默认关闭，因为当前网页主看彩图和 ROI。
@@ -101,7 +101,7 @@ data_profile = 0
 tcp_enabled = true
 
 # 电脑端接收网页服务的 IP。
-server_ip = "172.21.79.129"
+server_ip = "192.168.3.9"
 
 # 电脑端 UDP 图像端口。
 video_port = 10000
